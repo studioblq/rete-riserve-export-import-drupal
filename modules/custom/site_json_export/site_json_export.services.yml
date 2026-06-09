@@ -1,0 +1,6 @@
+services:
+  site_json_export.route_subscriber:
+    class: Drupal\site_json_export\Routing\SiteJsonExportRouteSubscriber
+    arguments: ['@config.factory']
+    tags:
+      - { name: event_subscriber }

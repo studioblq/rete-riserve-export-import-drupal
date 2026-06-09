@@ -1,0 +1,15 @@
+site_json_export.settings:
+  path: '/admin/config/services/site-json-export'
+  defaults:
+    _form: '\Drupal\site_json_export\Form\SiteJsonExportSettingsForm'
+    _title: 'Site JSON Export'
+  requirements:
+    _permission: 'administer site json export'
+
+site_json_export.export:
+  path: '/site-json-export'
+  defaults:
+    _controller: '\Drupal\site_json_export\Controller\SiteJsonExportController::export'
+    _title: 'Site JSON Export'
+  requirements:
+    _permission: 'access site json export'

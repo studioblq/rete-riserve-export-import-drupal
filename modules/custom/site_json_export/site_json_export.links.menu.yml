@@ -1,0 +1,5 @@
+site_json_export.settings:
+  title: 'Site JSON Export'
+  description: 'Configure JSON export path, content types, fields, and language.'
+  route_name: site_json_export.settings
+  parent: system.admin_config_services

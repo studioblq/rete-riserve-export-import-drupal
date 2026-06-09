@@ -1,0 +1,7 @@
+name: Site JSON Export
+type: module
+description: Expose selected node content as JSON with configurable path, fields, and language.
+package: Custom
+core: 8.x
+dependencies:
+  - node

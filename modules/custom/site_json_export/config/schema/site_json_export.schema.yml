@@ -1,0 +1,24 @@
+site_json_export.settings:
+  type: config_object
+  label: 'Site JSON Export settings'
+  mapping:
+    endpoint_path:
+      type: string
+      label: 'Endpoint path'
+    node_types:
+      type: sequence
+      label: 'Selected node types'
+      sequence:
+        type: string
+    language:
+      type: string
+      label: 'Export language'
+    fields:
+      type: mapping
+      label: 'Selected fields by node type'
+      mapping:
+        '*':
+          type: sequence
+          label: 'Fields for a content type'
+          sequence:
+            type: string
