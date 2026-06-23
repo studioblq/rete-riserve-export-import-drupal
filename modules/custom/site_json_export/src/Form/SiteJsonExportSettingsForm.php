@@ -130,6 +130,7 @@ class SiteJsonExportSettingsForm extends ConfigFormBase {
     ];
 
     $saved_fields = (array) ($config->get('fields') ?: []);
+    $saved_entity_reference_modes = (array) ($config->get('entity_reference_modes') ?: []);
 
     $form['fields_wrapper'] = [
       '#type' => 'details',
@@ -167,6 +168,59 @@ class SiteJsonExportSettingsForm extends ConfigFormBase {
           ],
         ],
       ];
+
+      $entity_reference_fields = [];
+      foreach ($field_definitions as $field_name => $field_definition) {
+        if (!$this->isExportableField($field_name, $field_definition)) {
+          continue;
+        }
+        if ($field_definition->getType() !== 'entity_reference') {
+          continue;
+        }
+
+        $entity_reference_fields[$field_name] = $this->t('@label (@machine_name)', [
+          '@label' => $field_definition->getLabel(),
+          '@machine_name' => $field_name,
+        ]);
+      }
+
+      if ($entity_reference_fields !== []) {
+        $form['fields_wrapper'][$bundle . '_entity_ref_modes'] = [
+          '#type' => 'details',
+          '#title' => $this->t('Entity reference output for @type', ['@type' => $node_type->label()]),
+          '#open' => FALSE,
+          '#states' => [
+            'visible' => [
+              ':input[name="node_types[' . $bundle . ']"]' => ['checked' => TRUE],
+            ],
+          ],
+        ];
+
+        foreach ($entity_reference_fields as $field_name => $field_label) {
+          $mode_default = isset($saved_entity_reference_modes[$bundle][$field_name])
+            ? (string) $saved_entity_reference_modes[$bundle][$field_name]
+            : 'id';
+          if (!in_array($mode_default, ['id', 'label', 'id_label'], TRUE)) {
+            $mode_default = 'id';
+          }
+
+          $form['fields_wrapper'][$bundle . '_entity_ref_modes']['entity_reference_modes'][$bundle][$field_name] = [
+            '#type' => 'select',
+            '#title' => $field_label,
+            '#options' => [
+              'id' => $this->t('ID (target_id)'),
+              'label' => $this->t('Valore entita (label)'),
+              'id_label' => $this->t('ID + valore entita'),
+            ],
+            '#default_value' => $mode_default,
+            '#states' => [
+              'visible' => [
+                ':input[name="fields_wrapper[' . $bundle . '][' . $field_name . ']"]' => ['checked' => TRUE],
+              ],
+            ],
+          ];
+        }
+      }
     }
 
     return parent::buildForm($form, $form_state);
@@ -199,9 +253,29 @@ class SiteJsonExportSettingsForm extends ConfigFormBase {
 
     $raw_fields = (array) $form_state->getValue('fields_wrapper');
     $clean_fields = [];
+    $clean_entity_reference_modes = [];
 
     foreach ($selected_node_types as $bundle) {
       $clean_fields[$bundle] = $this->sanitizeCheckboxValues($raw_fields[$bundle] ?? []);
+
+      $bundle_modes = [];
+      $raw_modes = $raw_fields[$bundle . '_entity_ref_modes']['entity_reference_modes'][$bundle] ?? [];
+      foreach ((array) $raw_modes as $field_name => $mode) {
+        $field_name = (string) $field_name;
+        if (!in_array($field_name, $clean_fields[$bundle], TRUE)) {
+          continue;
+        }
+
+        $mode = (string) $mode;
+        if (!in_array($mode, ['id', 'label', 'id_label'], TRUE)) {
+          $mode = 'id';
+        }
+        $bundle_modes[$field_name] = $mode;
+      }
+
+      if ($bundle_modes !== []) {
+        $clean_entity_reference_modes[$bundle] = $bundle_modes;
+      }
     }
 
     $this->configFactory->getEditable('site_json_export.settings')
@@ -209,6 +283,7 @@ class SiteJsonExportSettingsForm extends ConfigFormBase {
       ->set('language', (string) $form_state->getValue('language'))
       ->set('node_types', $selected_node_types)
       ->set('fields', $clean_fields)
+      ->set('entity_reference_modes', $clean_entity_reference_modes)
       ->save();
 
     $this->routeBuilder->rebuild();

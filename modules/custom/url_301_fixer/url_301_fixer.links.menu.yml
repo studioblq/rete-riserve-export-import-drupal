@@ -1,0 +1,5 @@
+url_301_fixer.form:
+  title: 'URL 301 Fixer'
+  description: 'Find and replace old URLs in node content.'
+  route_name: url_301_fixer.form
+  parent: system.admin_config_search

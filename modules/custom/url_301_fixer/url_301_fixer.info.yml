@@ -1,0 +1,7 @@
+name: URL 301 Fixer
+type: module
+description: Search and replace old URLs in node content to fix 301 redirects.
+package: Custom
+core: 8.x
+dependencies:
+  - node

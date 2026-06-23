@@ -2,3 +2,4 @@ endpoint_path: '/site-json-export'
 node_types: {  }
 language: 'all'
 fields: {  }
+entity_reference_modes: {  }

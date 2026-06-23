@@ -22,3 +22,14 @@ site_json_export.settings:
           label: 'Fields for a content type'
           sequence:
             type: string
+    entity_reference_modes:
+      type: mapping
+      label: 'Entity reference export mode by content type and field'
+      mapping:
+        '*':
+          type: mapping
+          label: 'Entity reference field modes for a content type'
+          mapping:
+            '*':
+              type: string
+              label: 'Entity reference export mode'

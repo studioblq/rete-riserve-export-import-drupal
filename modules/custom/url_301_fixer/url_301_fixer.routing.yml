@@ -1,0 +1,7 @@
+url_301_fixer.form:
+  path: '/admin/config/search/url-301-fixer'
+  defaults:
+    _form: '\Drupal\url_301_fixer\Form\Url301FixerForm'
+    _title: 'URL 301 Fixer'
+  requirements:
+    _permission: 'administer url 301 fixer'

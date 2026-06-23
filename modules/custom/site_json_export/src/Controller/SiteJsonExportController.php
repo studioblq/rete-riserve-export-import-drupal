@@ -60,6 +60,7 @@ class SiteJsonExportController extends ControllerBase {
     $node_types = (array) ($config->get('node_types') ?: []);
     $language = (string) ($config->get('language') ?: 'all');
     $fields_by_bundle = (array) ($config->get('fields') ?: []);
+    $entity_reference_modes = (array) ($config->get('entity_reference_modes') ?: []);
 
     if ($node_types === []) {
       return new JsonResponse([
@@ -112,7 +113,15 @@ class SiteJsonExportController extends ControllerBase {
           continue;
         }
 
-        $row[$field_name] = $this->normalizeField($node->get($field_name));
+        $mode = 'id';
+        if (isset($entity_reference_modes[$bundle]) && is_array($entity_reference_modes[$bundle]) && isset($entity_reference_modes[$bundle][$field_name])) {
+          $candidate_mode = (string) $entity_reference_modes[$bundle][$field_name];
+          if (in_array($candidate_mode, ['id', 'label', 'id_label'], TRUE)) {
+            $mode = $candidate_mode;
+          }
+        }
+
+        $row[$field_name] = $this->normalizeField($node->get($field_name), $mode);
       }
 
       $data[] = $row;
@@ -132,7 +141,7 @@ class SiteJsonExportController extends ControllerBase {
   /**
    * Normalizes a Drupal field value for JSON output.
    */
-  protected function normalizeField(FieldItemListInterface $items) {
+  protected function normalizeField(FieldItemListInterface $items, $entity_reference_mode = 'id') {
     if ($items->isEmpty()) {
       return NULL;
     }
@@ -140,14 +149,38 @@ class SiteJsonExportController extends ControllerBase {
     $field_type = $items->getFieldDefinition()->getType();
 
     if ($field_type === 'entity_reference') {
-      $ids = [];
-      foreach ($items->getValue() as $item) {
-        if (isset($item['target_id'])) {
-          $ids[] = (int) $item['target_id'];
+      $entity_reference_mode = in_array($entity_reference_mode, ['id', 'label', 'id_label'], TRUE) ? $entity_reference_mode : 'id';
+      $values = [];
+
+      foreach ($items as $item) {
+        $target_id = !empty($item->target_id) ? (int) $item->target_id : NULL;
+        if ($target_id === NULL) {
+          continue;
         }
+
+        if ($entity_reference_mode === 'id') {
+          $values[] = $target_id;
+          continue;
+        }
+
+        $label = NULL;
+        if (isset($item->entity) && is_object($item->entity) && method_exists($item->entity, 'label')) {
+          $label_value = $item->entity->label();
+          $label = is_string($label_value) ? $label_value : (string) $label_value;
+        }
+
+        if ($entity_reference_mode === 'label') {
+          $values[] = $label !== NULL && $label !== '' ? $label : (string) $target_id;
+          continue;
+        }
+
+        $values[] = [
+          'target_id' => $target_id,
+          'label' => $label !== NULL ? $label : '',
+        ];
       }
 
-      return count($ids) === 1 ? $ids[0] : $ids;
+      return count($values) === 1 ? $values[0] : $values;
     }
 
     if ($field_type === 'image' || $field_type === 'file') {
