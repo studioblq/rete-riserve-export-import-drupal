@@ -42,8 +42,8 @@ class RetiRiserveSetting {
     public function register_admin_menu() {
         if (!isset($GLOBALS['admin_page_hooks'][self::PARENT_MENU_SLUG])) {
             add_menu_page(
-                __('Reti Riserve', 'reti-riserve-setting'),
-                __('Reti Riserve', 'reti-riserve-setting'),
+                __('Area051 WP', 'reti-riserve-setting'),
+                __('Area051 WP', 'reti-riserve-setting'),
                 'manage_options',
                 self::PARENT_MENU_SLUG,
                 array($this, 'render_hub_page'),
@@ -68,7 +68,7 @@ class RetiRiserveSetting {
         }
 
         echo '<div class="wrap">';
-        echo '<h1>' . esc_html__('Reti Riserve', 'reti-riserve-setting') . '</h1>';
+        echo '<h1>' . esc_html__('Area051 WP', 'reti-riserve-setting') . '</h1>';
         echo '<p>' . esc_html__('Suite strumenti utili per il progetto Reti Riserve.', 'reti-riserve-setting') . '</p>';
         echo '</div>';
     }
@@ -219,6 +219,7 @@ JS;
 
         submit_button(__('Salva', 'reti-riserve-setting'));
 
+        echo '</form>';
         echo '<hr>';
         echo '<h2>' . esc_html__('Azioni bulk ACF', 'reti-riserve-setting') . '</h2>';
 
@@ -236,7 +237,6 @@ JS;
             echo '</form>';
         }
 
-        echo '</form>';
         echo '</div>';
     }
 
@@ -774,7 +774,7 @@ if (!function_exists('mostra_acf_testo')) {
 
         if (!empty($valore)) {
             $valore = str_replace('\\"', "'", $valore);
-            $valore = preg_replace('/\s+src="\//', ' src:"/', $valore);
+            $valore = preg_replace('/\s+src="\//', ' src="/', $valore);
             return $valore;
         }
 

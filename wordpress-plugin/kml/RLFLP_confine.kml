@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom"><Document><name>VR Fobbie - Polsa</name><description>Riserva naturale locale Fobbie - Laghetto della Polsa</description><open>1</open><atom:author><atom:name>Parco Naturale Locale del Monte Baldo</atom:name></atom:author><atom:link href="http://www.parks.it/riserva.fobbie.laghetto.polsa/map.php"/><Style id="ConfineAltreAree">
+				  <LineStyle>
+					<color>7fff00e0</color>
+					<width>2</width>
+				  </LineStyle>
+				  <PolyStyle>
+					<color>55ff00e0</color>
+					<fill>1</fill>  
+				  </PolyStyle>
+				</Style><Placemark id="RLFLP"><name>VR Fobbie - Laghetto della Polsa</name><description>Perimetro dell'area protetta</description><styleUrl>#ConfineAltreAree</styleUrl><Polygon><outerBoundaryIs><LinearRing><coordinates>10.93644658149477,45.78959314872482,0 10.93709743285561,45.79005126394311,0 10.93738490063749,45.78953880167855,0 10.93693931864023,45.78913649986077,0 10.93652409919986,45.78920200140061,0 10.93644658149477,45.78959314872482,0
+</coordinates></LinearRing></outerBoundaryIs>
+ </Polygon>
+  </Placemark></Document></kml>

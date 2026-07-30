@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom"><Document><name>VR Pasna</name><description>Riserva naturale locale Pasna</description><open>1</open><atom:author><atom:name>Parco Naturale Locale del Monte Baldo</atom:name></atom:author><atom:link href="http://www.parks.it/riserva.pasna/map.php"/><Style id="ConfineAltreAree">
+				  <LineStyle>
+					<color>7fff00e0</color>
+					<width>2</width>
+				  </LineStyle>
+				  <PolyStyle>
+					<color>55ff00e0</color>
+					<fill>1</fill>  
+				  </PolyStyle>
+				</Style><Placemark id="RLPSN"><name>VR Pasna</name><description>Perimetro dell'area protetta</description><styleUrl>#ConfineAltreAree</styleUrl><Polygon><outerBoundaryIs><LinearRing><coordinates>
+				10.89858903940968,45.79838317454029,0 10.89957907923456,45.7986158620909,0 10.89988859132324,45.7981116509907,0 10.8987667061209,45.79791440800761,0 10.89858903940968,45.79838317454029,0 
+			</coordinates></LinearRing></outerBoundaryIs>
+ </Polygon>
+  </Placemark></Document></kml>

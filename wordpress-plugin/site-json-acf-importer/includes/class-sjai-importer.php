@@ -55,8 +55,8 @@ class SJAI_Importer {
     public function register_admin_page() {
         if (!isset($GLOBALS['admin_page_hooks'][self::AREA051_MENU_SLUG])) {
             add_menu_page(
-                __('Reti Riserve', 'site-json-acf-importer'),
-                __('Reti Riserve', 'site-json-acf-importer'),
+                __('Area051 WP', 'site-json-acf-importer'),
+                __('Area051 WP', 'site-json-acf-importer'),
                 'manage_options',
                 self::AREA051_MENU_SLUG,
                 array($this, 'render_area051_hub_page'),
@@ -81,7 +81,7 @@ class SJAI_Importer {
         }
 
         echo '<div class="wrap">';
-        echo '<h1>' . esc_html__('Reti Riserve', 'site-json-acf-importer') . '</h1>';
+        echo '<h1>' . esc_html__('Area051 WP', 'site-json-acf-importer') . '</h1>';
         echo '<p>' . esc_html__('Suite strumenti utili per il passaggio da Drupal a WordPress.', 'site-json-acf-importer') . '</p>';
         echo '<ul style="list-style:disc;padding-left:20px;max-width:900px;">';
         echo '<li><strong>' . esc_html__('Site JSON Importer', 'site-json-acf-importer') . '</strong>: '

@@ -62,8 +62,8 @@ class Area051_Orphan_Media_Cleaner {
     public function register_admin_menu() {
         if (!isset($GLOBALS['admin_page_hooks'][self::PARENT_MENU_SLUG])) {
             add_menu_page(
-                __('Reti Riserve', 'area051-orphan-media-cleaner'),
-                __('Reti Riserve', 'area051-orphan-media-cleaner'),
+                __('Area051 WP', 'area051-orphan-media-cleaner'),
+                __('Area051 WP', 'area051-orphan-media-cleaner'),
                 'manage_options',
                 self::PARENT_MENU_SLUG,
                 array($this, 'render_area051_hub_page'),
@@ -88,7 +88,7 @@ class Area051_Orphan_Media_Cleaner {
         }
 
         echo '<div class="wrap">';
-        echo '<h1>' . esc_html__('Reti Riserve', 'area051-orphan-media-cleaner') . '</h1>';
+        echo '<h1>' . esc_html__('Area051 WP', 'area051-orphan-media-cleaner') . '</h1>';
         echo '<p>' . esc_html__('Suite strumenti utili per il passaggio da Drupal a WordPress.', 'area051-orphan-media-cleaner') . '</p>';
         echo '<ul style="list-style:disc;padding-left:20px;max-width:900px;">';
         echo '<li><strong>' . esc_html__('Site JSON Importer', 'area051-orphan-media-cleaner') . '</strong>: '

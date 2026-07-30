@@ -1,0 +1,49 @@
+<!-- Mappa risistemata: Talpina-Brentonico (S0333) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-omnivore@0.3.4/leaflet-omnivore.min.js"></script>
+
+<style>
+  #rr-map-talpina { width:100%; height:400px; border:1px solid #9aa39a; margin:15px auto 0; background:#f3f5f6; }
+  .rr-map-toolbar { display:flex; flex-wrap:wrap; gap:8px 12px; margin:8px 0; font-size:14px; }
+  .rr-map-toolbar label { display:inline-flex; align-items:center; gap:6px; }
+  .rr-legend-icon { width:18px; height:18px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#fff; border:1px solid rgba(0,0,0,.2); background:#3f8f4e; }
+</style>
+
+<p><strong>(<a href="/it/mappa-del-parco">Vai alla mappa interattiva del Parco</a>)</strong></p>
+<div class="rr-map-toolbar">
+  <label><input type="checkbox" id="rr-cb-talpina" checked /> <span class="rr-legend-icon">A</span> Area protetta</label>
+</div>
+<div id="rr-map-talpina"></div>
+
+<script>
+(function () {
+  function initMapTalpina() {
+    if (!window.L) return;
+    var mapEl = document.getElementById('rr-map-talpina');
+    if (!mapEl) return;
+
+    var map = L.map(mapEl).setView([45.79, 10.95], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19, attribution:'&copy; OpenStreetMap contributors' }).addTo(map);
+
+    var gConfine = L.layerGroup().addTo(map);
+    if (window.omnivore) {
+      var confine = omnivore.kml('/kml/S0333_confine.kml');
+      confine.on('ready', function () {
+        gConfine.addLayer(confine);
+        var b = confine.getBounds();
+        if (b && b.isValid()) map.fitBounds(b.pad(0.08), { maxZoom: 14 });
+      });
+    }
+
+    var cb = document.getElementById('rr-cb-talpina');
+    if (cb) cb.addEventListener('change', function () { cb.checked ? map.addLayer(gConfine) : map.removeLayer(gConfine); });
+
+    setTimeout(function () { map.invalidateSize(); }, 250);
+    setTimeout(function () { map.invalidateSize(); }, 800);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initMapTalpina);
+  else initMapTalpina();
+})();
+</script>
