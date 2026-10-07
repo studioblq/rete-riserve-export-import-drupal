@@ -2379,6 +2379,27 @@ JS;
         return is_string($meta) && trim($meta) !== '';
     }
 
+    protected function get_gallery_value_count($acf_field, $post_id) {
+        $acf_field = is_string($acf_field) ? trim($acf_field) : '';
+        $post_id = (int) $post_id;
+        if ($acf_field === '' || $post_id <= 0) {
+            return 0;
+        }
+
+        $meta = get_post_meta($post_id, $acf_field, true);
+        if (is_array($meta)) {
+            return count(array_filter($meta, function ($v) {
+                return $v !== '' && $v !== null;
+            }));
+        }
+
+        if (is_numeric($meta)) {
+            return ((int) $meta) > 0 ? 1 : 0;
+        }
+
+        return (is_string($meta) && trim($meta) !== '') ? 1 : 0;
+    }
+
     protected function map_fields_v2($post_id, $item, $source_type, $field_map_v2, $import_images) {
         if (empty($field_map_v2[$source_type]) || !is_array($field_map_v2[$source_type])) {
             return false;
@@ -2449,8 +2470,9 @@ JS;
                     }
 
                     $acf_f = substr($wp_target, 4);
-                    if ($this->post_has_gallery_value($acf_f, $post_id)) {
-                        $this->log_import_debug('Gallery skipped: existing value kept post_id=' . (int) $post_id . ' field=' . $acf_f);
+                    $existing_gallery_count = $this->get_gallery_value_count($acf_f, $post_id);
+                    if ($existing_gallery_count > 0 && $existing_gallery_count >= count($gallery_entries)) {
+                        $this->log_import_debug('Gallery skipped: already complete post_id=' . (int) $post_id . ' field=' . $acf_f . ' count=' . $existing_gallery_count . '/' . count($gallery_entries));
                         continue;
                     }
 
@@ -3735,10 +3757,11 @@ JS;
         @set_time_limit(0);
         $batch_size = 1;
         $request_started_at = microtime(true);
-        $max_request_seconds = 25;
-        $this->sideload_deadline_ts = $request_started_at + 20;
+        $max_request_seconds = 50;
+        // One post per batch: allow its whole gallery to download in a single request.
+        $this->sideload_deadline_ts = $request_started_at + 45;
         $this->sideload_attempts_in_request = 0;
-        $this->sideload_max_attempts_in_request = 3;
+        $this->sideload_max_attempts_in_request = 0;
         $this->disable_sideload_in_request = false;
         $this->reset_request_image_stats();
         $type_map = is_array($settings['type_map_ui']) ? $settings['type_map_ui'] : array();
