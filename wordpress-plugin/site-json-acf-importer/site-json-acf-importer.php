@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Site JSON ACF Importer
  * Description: Importa contenuti JSON (es. export Drupal) in WordPress con supporto ACF Pro.
- * Version: 1.5.20
+ * Version: 1.5.21
  * Author: Custom
  * Author URI: https://area051.com
  * Requires at least: 6.0
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('SJAI_VERSION', '1.5.20');
+define('SJAI_VERSION', '1.5.21');
 define('SJAI_PLUGIN_FILE', __FILE__);
 define('SJAI_PLUGIN_DIR', plugin_dir_path(__FILE__));
 

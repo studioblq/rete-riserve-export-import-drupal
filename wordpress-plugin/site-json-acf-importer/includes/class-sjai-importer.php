@@ -2379,6 +2379,31 @@ JS;
         return is_string($meta) && trim($meta) !== '';
     }
 
+    protected function post_has_valid_thumbnail($post_id) {
+        $thumb_id = (int) get_post_thumbnail_id($post_id);
+        if ($thumb_id <= 0) {
+            return false;
+        }
+
+        $attachment = get_post($thumb_id);
+        if (!$attachment || $attachment->post_type !== 'attachment') {
+            // Stale reference to a deleted attachment: clear it so a fresh image can be imported.
+            delete_post_thumbnail($post_id);
+            return false;
+        }
+
+        return true;
+    }
+
+    protected function attachment_id_exists($attachment_id) {
+        $attachment_id = (int) $attachment_id;
+        if ($attachment_id <= 0) {
+            return false;
+        }
+        $attachment = get_post($attachment_id);
+        return $attachment && $attachment->post_type === 'attachment';
+    }
+
     protected function get_gallery_value_count($acf_field, $post_id) {
         $acf_field = is_string($acf_field) ? trim($acf_field) : '';
         $post_id = (int) $post_id;
@@ -2388,13 +2413,21 @@ JS;
 
         $meta = get_post_meta($post_id, $acf_field, true);
         if (is_array($meta)) {
-            return count(array_filter($meta, function ($v) {
-                return $v !== '' && $v !== null;
-            }));
+            $count = 0;
+            foreach ($meta as $v) {
+                if (is_numeric($v)) {
+                    if ($this->attachment_id_exists($v)) {
+                        $count++;
+                    }
+                } elseif (is_string($v) && trim($v) !== '') {
+                    $count++;
+                }
+            }
+            return $count;
         }
 
         if (is_numeric($meta)) {
-            return ((int) $meta) > 0 ? 1 : 0;
+            return $this->attachment_id_exists($meta) ? 1 : 0;
         }
 
         return (is_string($meta) && trim($meta) !== '') ? 1 : 0;
@@ -2579,7 +2612,7 @@ JS;
                     }
                 }
 
-                if ($wp_target === 'wp:featured_image' && has_post_thumbnail($post_id)) {
+                if ($wp_target === 'wp:featured_image' && $this->post_has_valid_thumbnail($post_id)) {
                     $this->log_import_debug('Featured image skipped: existing thumbnail kept post_id=' . (int) $post_id);
                     continue;
                 }
