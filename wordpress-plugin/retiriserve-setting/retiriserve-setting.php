@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Reti Riserve Setting
  * Description: Logo default e sticky, pagina di accesso personalizzata, disattivazione ed eliminazione dei commenti.
- * Version: 1.4.0
+ * Version: 1.4.1
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal

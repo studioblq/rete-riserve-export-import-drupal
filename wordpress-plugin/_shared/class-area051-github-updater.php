@@ -71,7 +71,9 @@ if (!class_exists('Area051_GitHub_Updater_V1', false)) {
                 }
             }
 
-            $response = wp_remote_get(self::MANIFEST_URL, array(
+            // GitHub caches the release download URL for several minutes after a new
+            // manifest is uploaded: a unique query string always returns the latest one.
+            $response = wp_remote_get(add_query_arg('t', time(), self::MANIFEST_URL), array(
                 'timeout' => 10,
                 'headers' => array('Accept' => 'application/json'),
             ));
