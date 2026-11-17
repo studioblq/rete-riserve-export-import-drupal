@@ -2,8 +2,10 @@
 /**
  * Plugin Name: URL 301 Fixer
  * Description: Search and replace old URLs in WordPress content and meta, with per-page and bulk actions.
- * Version: 1.2.0
- * Author: Custom
+ * Version: 1.2.1
+ * Author: area051.com
+ * Author URI: https://area051.com
+ * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Text Domain: url-301-fixer
@@ -12,6 +14,9 @@
 if (!defined('ABSPATH')) {
     exit;
 }
+
+require_once __DIR__ . '/lib/class-area051-github-updater.php';
+new Area051_GitHub_Updater_V1(__FILE__, 'url-301-fixer');
 
 class URL301Fixer {
     const MENU_SLUG = 'url-301-fixer';

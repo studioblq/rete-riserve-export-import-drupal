@@ -2,9 +2,10 @@
 /**
  * Plugin Name: Area051 Orphan Media Cleaner
  * Description: Scansiona ed elimina i media orfani (non collegati ad alcun contenuto) in sicurezza.
- * Version: 1.2.1
- * Author: Area051
+ * Version: 1.2.2
+ * Author: area051.com
  * Author URI: https://area051.com
+ * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Text Domain: area051-orphan-media-cleaner
@@ -13,6 +14,9 @@
 if (!defined('ABSPATH')) {
     exit;
 }
+
+require_once __DIR__ . '/lib/class-area051-github-updater.php';
+new Area051_GitHub_Updater_V1(__FILE__, 'area051-orphan-media-cleaner');
 
 class Area051_Orphan_Media_Cleaner {
     const MENU_SLUG = 'area051-orphan-media-cleaner';

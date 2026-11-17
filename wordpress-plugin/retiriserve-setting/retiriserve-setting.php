@@ -2,8 +2,10 @@
 /**
  * Plugin Name: Reti Riserve Setting
  * Description: Configura logo default e logo sticky con selezione media, poi aggiorna il logo al cambio sticky dell'header. Personalizza la pagina di accesso con logo e nome del sito.
- * Version: 1.3.0
- * Author: Custom
+ * Version: 1.3.1
+ * Author: area051.com
+ * Author URI: https://area051.com
+ * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Text Domain: reti-riserve-setting
@@ -12,6 +14,9 @@
 if (!defined('ABSPATH')) {
     exit;
 }
+
+require_once __DIR__ . '/lib/class-area051-github-updater.php';
+new Area051_GitHub_Updater_V1(__FILE__, 'retiriserve-setting');
 
 // Another copy of this plugin (e.g. the old "setting" folder) is already loaded: stop here instead of a fatal error.
 // The class is registered at compile time, so detect the old copy by its unconditional bootstrap function.

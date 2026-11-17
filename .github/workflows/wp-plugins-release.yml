@@ -1,0 +1,28 @@
+name: Release plugin WordPress
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'wordpress-plugin/**'
+      - '.github/workflows/wp-plugins-release.yml'
+      - '.github/scripts/wp-plugins-release.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wp-plugins-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Crea release e manifest
+        run: bash .github/scripts/wp-plugins-release.sh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
