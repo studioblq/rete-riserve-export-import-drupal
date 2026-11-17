@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Reti Riserve Setting
- * Description: Configura logo default e logo sticky con selezione media, poi aggiorna il logo al cambio sticky dell'header. Personalizza la pagina di accesso con logo e nome del sito.
- * Version: 1.3.2
+ * Description: Logo default e sticky, pagina di accesso personalizzata, disattivazione ed eliminazione dei commenti.
+ * Version: 1.4.0
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -67,6 +67,9 @@ class RetiRiserveSetting {
     const FRONT_STYLE_HANDLE = 'rrs-setting-front-style';
     const NONCE_BULK_ACF = 'rrs_bulk_acf_mostra_figli';
     const OPTION_BULK_ACF_DONE = 'rrs_bulk_acf_mostra_figli_done';
+    const NONCE_DELETE_COMMENTS = 'rrs_delete_comments';
+    /** Comment types used internally by plugins (WooCommerce order notes...): never deleted. */
+    const PROTECTED_COMMENT_TYPES = array('order_note', 'webhook_delivery', 'action_log');
     protected $front_debug_printed = false;
 
     public function init() {
@@ -86,6 +89,11 @@ class RetiRiserveSetting {
         add_filter('login_headerurl', array($this, 'filter_login_header_url'));
         add_filter('login_headertext', array($this, 'filter_login_header_text'));
         add_filter('login_message', array($this, 'filter_login_message'));
+        add_action('admin_post_rrs_delete_comments', array($this, 'handle_delete_comments'));
+
+        if ($this->comments_disabled()) {
+            $this->register_comments_disabled_hooks();
+        }
     }
 
     public function register_admin_menu() {
@@ -279,6 +287,16 @@ JS;
         $login_logo_custom = (string) $settings['login_logo_custom'];
         $login_background = (string) $settings['login_background'];
 
+        echo '<tr><th colspan="2"><h2 style="margin:10px 0 0;">' . esc_html__('Commenti', 'reti-riserve-setting') . '</h2></th></tr>';
+
+        echo '<tr>';
+        echo '<th scope="row">' . esc_html__('Disattiva commenti', 'reti-riserve-setting') . '</th>';
+        echo '<td>';
+        echo '<label><input type="checkbox" name="rrs_comments_disabled" value="1" ' . checked(1, (int) $settings['comments_disabled'], false) . '> ' . esc_html__('Disattiva i commenti e i pingback su tutto il sito', 'reti-riserve-setting') . '</label>';
+        echo '<p class="description">' . esc_html__('Chiude commenti e pingback su tutti i contenuti, nasconde quelli esistenti nel sito, blocca l\'invio (anche via REST e XML-RPC) e toglie la voce Commenti dalla bacheca. I commenti già presenti restano nel database: per eliminarli usa il pulsante "Elimina commenti" più in basso.', 'reti-riserve-setting') . '</p>';
+        echo '</td>';
+        echo '</tr>';
+
         echo '<tr><th colspan="2"><h2 style="margin:10px 0 0;">' . esc_html__('Pagina di accesso', 'reti-riserve-setting') . '</h2></th></tr>';
 
         echo '<tr>';
@@ -371,6 +389,9 @@ JS;
         submit_button(__('Salva', 'reti-riserve-setting'));
 
         echo '</form>';
+
+        $this->render_delete_comments_section($notice);
+
         echo '<hr>';
         echo '<h2>' . esc_html__('Azioni bulk ACF', 'reti-riserve-setting') . '</h2>';
 
@@ -403,6 +424,7 @@ JS;
             'logo_sticky' => isset($_POST['rrs_logo_sticky']) ? esc_url_raw(trim(wp_unslash($_POST['rrs_logo_sticky']))) : '',
             'preview_default_image' => isset($_POST['rrs_preview_default_image']) ? esc_url_raw(trim(wp_unslash($_POST['rrs_preview_default_image']))) : '',
             'testata_default_image' => isset($_POST['rrs_testata_default_image']) ? esc_url_raw(trim(wp_unslash($_POST['rrs_testata_default_image']))) : '',
+            'comments_disabled' => !empty($_POST['rrs_comments_disabled']) ? 1 : 0,
             'login_custom' => !empty($_POST['rrs_login_custom']) ? 1 : 0,
             'login_title' => isset($_POST['rrs_login_title']) ? sanitize_text_field(wp_unslash($_POST['rrs_login_title'])) : '',
             'login_subtitle' => isset($_POST['rrs_login_subtitle']) ? sanitize_text_field(wp_unslash($_POST['rrs_login_subtitle'])) : '',
@@ -426,6 +448,12 @@ JS;
 
         update_option(self::OPTION_KEY, $settings);
 
+        if (!empty($settings['comments_disabled'])) {
+            // New content is created with comments closed too.
+            update_option('default_comment_status', 'closed');
+            update_option('default_ping_status', 'closed');
+        }
+
         $redirect = add_query_arg(
             array(
                 'page' => self::MENU_SLUG,
@@ -435,6 +463,207 @@ JS;
         );
 
         wp_safe_redirect($redirect);
+        exit;
+    }
+
+    protected function comments_disabled() {
+        $settings = $this->get_settings();
+        return !empty($settings['comments_disabled']);
+    }
+
+    /**
+     * Turns comments off everywhere: front end, admin, REST, XML-RPC.
+     */
+    protected function register_comments_disabled_hooks() {
+        // Front end: closed and hidden.
+        add_filter('comments_open', '__return_false', 20);
+        add_filter('pings_open', '__return_false', 20);
+        add_filter('comments_array', '__return_empty_array', 20);
+        add_filter('get_comments_number', '__return_zero', 20);
+        add_filter('feed_links_show_comments_feed', '__return_false');
+
+        // Submissions: wp-comments-post.php, REST API, XML-RPC pingbacks.
+        add_action('pre_comment_on_post', array($this, 'block_comment_submission'));
+        add_filter('rest_endpoints', array($this, 'filter_rest_endpoints_comments'));
+        add_filter('xmlrpc_methods', array($this, 'filter_xmlrpc_methods_comments'));
+        add_filter('wp_headers', array($this, 'filter_headers_pingback'));
+
+        // Post types: no comments/trackbacks support, so editors hide the panels.
+        add_action('init', array($this, 'remove_comments_post_type_support'), 100);
+
+        // Admin: menu, admin bar, dashboard widget, comments screens.
+        add_action('admin_menu', array($this, 'remove_comments_admin_menu'), 999);
+        add_action('admin_bar_menu', array($this, 'remove_comments_admin_bar'), 999);
+        add_action('wp_dashboard_setup', array($this, 'remove_comments_dashboard_widget'));
+        add_action('admin_init', array($this, 'redirect_comments_admin_pages'));
+    }
+
+    public function block_comment_submission() {
+        wp_die(esc_html__('I commenti sono disattivati su questo sito.', 'reti-riserve-setting'), '', array('response' => 403));
+    }
+
+    public function filter_rest_endpoints_comments($endpoints) {
+        foreach (array_keys($endpoints) as $route) {
+            if (strpos($route, '/wp/v2/comments') === 0) {
+                unset($endpoints[$route]);
+            }
+        }
+        return $endpoints;
+    }
+
+    public function filter_xmlrpc_methods_comments($methods) {
+        foreach (array('pingback.ping', 'pingback.extensions.getPingbacks', 'wp.newComment', 'wp.editComment', 'wp.deleteComment') as $method) {
+            unset($methods[$method]);
+        }
+        return $methods;
+    }
+
+    public function filter_headers_pingback($headers) {
+        unset($headers['X-Pingback']);
+        return $headers;
+    }
+
+    public function remove_comments_post_type_support() {
+        foreach (get_post_types() as $post_type) {
+            if (post_type_supports($post_type, 'comments')) {
+                remove_post_type_support($post_type, 'comments');
+            }
+            if (post_type_supports($post_type, 'trackbacks')) {
+                remove_post_type_support($post_type, 'trackbacks');
+            }
+        }
+    }
+
+    public function remove_comments_admin_menu() {
+        remove_menu_page('edit-comments.php');
+    }
+
+    public function remove_comments_admin_bar($wp_admin_bar) {
+        $wp_admin_bar->remove_node('comments');
+    }
+
+    public function remove_comments_dashboard_widget() {
+        remove_meta_box('dashboard_recent_comments', 'dashboard', 'normal');
+    }
+
+    public function redirect_comments_admin_pages() {
+        global $pagenow;
+        if ($pagenow === 'edit-comments.php' || $pagenow === 'comment.php') {
+            wp_safe_redirect(admin_url());
+            exit;
+        }
+    }
+
+    /**
+     * Comment counts that "Elimina commenti" would delete, by status.
+     */
+    protected function count_deletable_comments() {
+        global $wpdb;
+
+        $placeholders = implode(',', array_fill(0, count(self::PROTECTED_COMMENT_TYPES), '%s'));
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT comment_approved AS status, COUNT(*) AS total FROM {$wpdb->comments} WHERE comment_type NOT IN ($placeholders) GROUP BY comment_approved",
+            self::PROTECTED_COMMENT_TYPES
+        ));
+
+        $counts = array('total' => 0, 'approved' => 0, 'pending' => 0, 'spam' => 0, 'trash' => 0);
+        foreach ((array) $rows as $row) {
+            $total = (int) $row->total;
+            $counts['total'] += $total;
+            if ($row->status === '1') {
+                $counts['approved'] += $total;
+            } elseif ($row->status === '0') {
+                $counts['pending'] += $total;
+            } elseif ($row->status === 'spam') {
+                $counts['spam'] += $total;
+            } elseif ($row->status === 'trash' || $row->status === 'post-trashed') {
+                $counts['trash'] += $total;
+            }
+        }
+
+        return $counts;
+    }
+
+    protected function render_delete_comments_section($notice) {
+        echo '<hr>';
+        echo '<h2>' . esc_html__('Elimina commenti', 'reti-riserve-setting') . '</h2>';
+
+        if ($notice === 'comments_deleted') {
+            $deleted = isset($_GET['deleted']) ? absint($_GET['deleted']) : 0;
+            echo '<div class="notice notice-success is-dismissible"><p>' . esc_html(sprintf(__('Commenti eliminati: %d.', 'reti-riserve-setting'), $deleted)) . '</p></div>';
+        }
+
+        $counts = $this->count_deletable_comments();
+
+        if ($counts['total'] === 0) {
+            echo '<p>' . esc_html__('Nessun commento presente nel database.', 'reti-riserve-setting') . '</p>';
+            return;
+        }
+
+        echo '<p>' . esc_html(sprintf(
+            __('Commenti presenti: %1$d (approvati %2$d, in attesa %3$d, spam %4$d, cestino %5$d), compresi pingback e trackback.', 'reti-riserve-setting'),
+            $counts['total'],
+            $counts['approved'],
+            $counts['pending'],
+            $counts['spam'],
+            $counts['trash']
+        )) . '</p>';
+        echo '<p class="description">' . esc_html__('L\'eliminazione è definitiva e non passa dal cestino. Le note degli ordini WooCommerce non vengono toccate. Fai un backup del database prima di procedere.', 'reti-riserve-setting') . '</p>';
+
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(\'' . esc_js(sprintf(__('Eliminare definitivamente %d commenti? L\'operazione non si può annullare.', 'reti-riserve-setting'), $counts['total'])) . '\');">';
+        echo '<input type="hidden" name="action" value="rrs_delete_comments">';
+        wp_nonce_field(self::NONCE_DELETE_COMMENTS, 'rrs_delete_comments_nonce');
+        submit_button(sprintf(__('Elimina tutti i %d commenti', 'reti-riserve-setting'), $counts['total']), 'delete', 'submit', false);
+        echo '</form>';
+    }
+
+    public function handle_delete_comments() {
+        if (!current_user_can('manage_options') || !current_user_can('moderate_comments')) {
+            wp_die(esc_html__('Non autorizzato.', 'reti-riserve-setting'));
+        }
+
+        check_admin_referer(self::NONCE_DELETE_COMMENTS, 'rrs_delete_comments_nonce');
+
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(0);
+        }
+
+        global $wpdb;
+        $placeholders = implode(',', array_fill(0, count(self::PROTECTED_COMMENT_TYPES), '%s'));
+        $deleted = 0;
+
+        // Batches keep each query small on big spam tables.
+        do {
+            $ids = $wpdb->get_col($wpdb->prepare(
+                "SELECT comment_ID FROM {$wpdb->comments} WHERE comment_type NOT IN ($placeholders) LIMIT 1000",
+                self::PROTECTED_COMMENT_TYPES
+            ));
+            if (empty($ids)) {
+                break;
+            }
+
+            $ids = array_map('absint', $ids);
+            $id_list = implode(',', $ids);
+            $wpdb->query("DELETE FROM {$wpdb->commentmeta} WHERE comment_id IN ($id_list)");
+            $deleted += (int) $wpdb->query("DELETE FROM {$wpdb->comments} WHERE comment_ID IN ($id_list)");
+
+            foreach ($ids as $id) {
+                clean_comment_cache($id);
+            }
+        } while (count($ids) === 1000);
+
+        // Recount approved comments per post (protected types stay counted as before).
+        $wpdb->query("UPDATE {$wpdb->posts} p SET p.comment_count = (SELECT COUNT(*) FROM {$wpdb->comments} c WHERE c.comment_post_ID = p.ID AND c.comment_approved = '1')");
+        delete_transient('wc_count_comments');
+        wp_cache_delete('comments-0', 'counts');
+        if (function_exists('wp_cache_flush_group')) {
+            wp_cache_flush_group('comment');
+        }
+
+        wp_safe_redirect(add_query_arg(
+            array('page' => self::MENU_SLUG, 'rrs_notice' => 'comments_deleted', 'deleted' => $deleted),
+            admin_url('admin.php')
+        ));
         exit;
     }
 
@@ -705,6 +934,7 @@ JS;
                 'logo_sticky' => '',
                 'preview_default_image' => '',
                 'testata_default_image' => '',
+                'comments_disabled' => 0,
                 'login_custom' => 1,
                 'login_title' => 'Area di gestione',
                 'login_subtitle' => 'Accedi per gestire i contenuti del sito',
