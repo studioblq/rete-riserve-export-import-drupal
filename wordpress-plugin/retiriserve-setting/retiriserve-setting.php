@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Reti Riserve Setting
  * Description: Configura logo default e logo sticky con selezione media, poi aggiorna il logo al cambio sticky dell'header. Personalizza la pagina di accesso con logo e nome del sito.
- * Version: 1.3.1
+ * Version: 1.3.2
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -18,9 +18,31 @@ if (!defined('ABSPATH')) {
 require_once __DIR__ . '/lib/class-area051-github-updater.php';
 new Area051_GitHub_Updater_V1(__FILE__, 'retiriserve-setting');
 
-// Another copy of this plugin (e.g. the old "setting" folder) is already loaded: stop here instead of a fatal error.
-// The class is registered at compile time, so detect the old copy by its unconditional bootstrap function.
-if (defined('RRS_SETTING_PLUGIN_FILE') || function_exists('reti_riserve_setting_bootstrap')) {
+/**
+ * TRUE when the old copy of this plugin (folder "setting", file setting.php) is active.
+ *
+ * The old file declares the same class and functions without guards, so if it
+ * loads after this one the site dies with a fatal error. In that case this copy
+ * must not declare anything: everything below is conditional for that reason.
+ */
+if (!function_exists('rrs_setting_old_copy_active')) {
+    function rrs_setting_old_copy_active() {
+        $active = (array) get_option('active_plugins', array());
+        if (is_multisite()) {
+            $active = array_merge($active, array_keys((array) get_site_option('active_sitewide_plugins', array())));
+        }
+        $own = plugin_basename(__FILE__);
+        foreach ($active as $plugin) {
+            if ($plugin !== $own && basename((string) $plugin) === 'setting.php' && file_exists(WP_PLUGIN_DIR . '/' . $plugin)) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+// Another copy is already loaded (or will be): stop here instead of a fatal error.
+if (defined('RRS_SETTING_PLUGIN_FILE') || function_exists('reti_riserve_setting_bootstrap') || rrs_setting_old_copy_active()) {
     add_action('admin_notices', function () {
         if (!current_user_can('activate_plugins')) {
             return;
@@ -34,6 +56,8 @@ if (defined('RRS_SETTING_PLUGIN_FILE') || function_exists('reti_riserve_setting_
 
 define('RRS_SETTING_PLUGIN_FILE', __FILE__);
 
+// Conditional declaration (not hoisted at compile time): see rrs_setting_old_copy_active().
+if (!class_exists('RetiRiserveSetting', false)) {
 class RetiRiserveSetting {
     const PARENT_MENU_SLUG = 'reti-riserve-suite';
     const MENU_SLUG = 'reti-riserve-setting';
@@ -915,6 +939,7 @@ JS;
         return $this->get_preview_default_image() !== '';
     }
 }
+} // class_exists RetiRiserveSetting
 
 if (!function_exists('reti_riserve_setting_bootstrap')) {
     function reti_riserve_setting_bootstrap() {
