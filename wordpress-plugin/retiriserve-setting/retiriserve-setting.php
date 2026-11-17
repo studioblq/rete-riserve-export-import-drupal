@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Reti Riserve Setting
- * Description: Configura logo default e logo sticky con selezione media, poi aggiorna il logo al cambio sticky dell'header.
- * Version: 1.0.0
+ * Description: Configura logo default e logo sticky con selezione media, poi aggiorna il logo al cambio sticky dell'header. Personalizza la pagina di accesso con logo e nome del sito.
+ * Version: 1.1.0
  * Author: Custom
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -37,6 +37,10 @@ class RetiRiserveSetting {
         add_action('wp_head', array($this, 'print_front_debug_marker_head'), 1);
         add_action('wp_footer', array($this, 'print_front_debug_marker_footer'), 98);
         add_action('wp_footer', array($this, 'print_front_script_fallback'), 99);
+        add_action('login_enqueue_scripts', array($this, 'print_login_styles'));
+        add_filter('login_headerurl', array($this, 'filter_login_header_url'));
+        add_filter('login_headertext', array($this, 'filter_login_header_text'));
+        add_filter('login_message', array($this, 'filter_login_message'));
     }
 
     public function register_admin_menu() {
@@ -215,6 +219,28 @@ JS;
         echo '</td>';
         echo '</tr>';
 
+        echo '<tr><th colspan="2"><h2 style="margin:10px 0 0;">' . esc_html__('Pagina di accesso', 'reti-riserve-setting') . '</h2></th></tr>';
+
+        echo '<tr>';
+        echo '<th scope="row">' . esc_html__('Personalizza login', 'reti-riserve-setting') . '</th>';
+        echo '<td>';
+        echo '<label><input type="checkbox" name="rrs_login_custom" value="1" ' . checked(1, (int) $settings['login_custom'], false) . '> ' . esc_html__('Usa il Logo Sticky e il nome del sito nella pagina wp-login.php', 'reti-riserve-setting') . '</label>';
+        echo '<p class="description">' . esc_html(sprintf(
+            __('Nome mostrato: "%s" (Impostazioni > Generali > Titolo del sito). Se il Logo Sticky è vuoto si usa il Logo Default.', 'reti-riserve-setting'),
+            get_bloginfo('name')
+        )) . '</p>';
+        echo '</td>';
+        echo '</tr>';
+
+        echo '<tr>';
+        echo '<th scope="row"><label for="rrs_login_accent">' . esc_html__('Colore principale login', 'reti-riserve-setting') . '</label></th>';
+        echo '<td>';
+        echo '<input type="color" id="rrs_login_accent" name="rrs_login_accent" value="' . esc_attr($settings['login_accent']) . '">';
+        echo '<p class="description">' . esc_html__('Pulsante "Accedi", bordo dei campi attivi e link.', 'reti-riserve-setting') . '</p>';
+        echo ' <a href="' . esc_url(wp_login_url()) . '" target="_blank" rel="noopener">' . esc_html__('Apri anteprima login', 'reti-riserve-setting') . '</a>';
+        echo '</td>';
+        echo '</tr>';
+
         echo '</table>';
 
         submit_button(__('Salva', 'reti-riserve-setting'));
@@ -252,7 +278,13 @@ JS;
             'logo_sticky' => isset($_POST['rrs_logo_sticky']) ? esc_url_raw(trim(wp_unslash($_POST['rrs_logo_sticky']))) : '',
             'preview_default_image' => isset($_POST['rrs_preview_default_image']) ? esc_url_raw(trim(wp_unslash($_POST['rrs_preview_default_image']))) : '',
             'testata_default_image' => isset($_POST['rrs_testata_default_image']) ? esc_url_raw(trim(wp_unslash($_POST['rrs_testata_default_image']))) : '',
+            'login_custom' => !empty($_POST['rrs_login_custom']) ? 1 : 0,
+            'login_accent' => isset($_POST['rrs_login_accent']) ? (string) sanitize_hex_color(wp_unslash($_POST['rrs_login_accent'])) : '',
         );
+
+        if ($settings['login_accent'] === '') {
+            $settings['login_accent'] = '#2e7d4f';
+        }
 
         update_option(self::OPTION_KEY, $settings);
 
@@ -535,8 +567,94 @@ JS;
                 'logo_sticky' => '',
                 'preview_default_image' => '',
                 'testata_default_image' => '',
+                'login_custom' => 1,
+                'login_accent' => '#2e7d4f',
             )
         );
+    }
+
+    protected function login_is_custom() {
+        $settings = $this->get_settings();
+        return !empty($settings['login_custom']);
+    }
+
+    protected function get_login_logo_url() {
+        $settings = $this->get_settings();
+        foreach (array('logo_sticky', 'logo_default') as $key) {
+            if (!empty($settings[$key])) {
+                return esc_url_raw($settings[$key]);
+            }
+        }
+
+        $custom_logo_id = (int) get_theme_mod('custom_logo');
+        if ($custom_logo_id > 0) {
+            $url = wp_get_attachment_image_url($custom_logo_id, 'medium');
+            if ($url) {
+                return $url;
+            }
+        }
+
+        return '';
+    }
+
+    public function filter_login_header_url($url) {
+        return $this->login_is_custom() ? home_url('/') : $url;
+    }
+
+    public function filter_login_header_text($text) {
+        return $this->login_is_custom() ? get_bloginfo('name') : $text;
+    }
+
+    public function filter_login_message($message) {
+        if (!$this->login_is_custom()) {
+            return $message;
+        }
+
+        $name = get_bloginfo('name');
+        if ($name === '') {
+            return $message;
+        }
+
+        return '<p class="rrs-login-site-name">' . esc_html($name) . '</p>' . $message;
+    }
+
+    public function print_login_styles() {
+        if (!$this->login_is_custom()) {
+            return;
+        }
+
+        $settings = $this->get_settings();
+        $accent = sanitize_hex_color($settings['login_accent']);
+        if (!$accent) {
+            $accent = '#2e7d4f';
+        }
+        $logo = $this->get_login_logo_url();
+
+        $logo_css = $logo !== ''
+            ? '.login h1 a{background-image:url("' . esc_url($logo) . '");background-size:contain;background-position:center;background-repeat:no-repeat;width:100%;max-width:260px;height:96px;margin:0 auto 8px;}'
+            : '.login h1{display:none;}';
+
+        $css = ':root{--rrs-accent:' . $accent . ';}'
+            . 'body.login{background:#f3f5f2;background-image:radial-gradient(circle at 20% 0%,rgba(0,0,0,.03),transparent 60%);color:#1d2327;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}'
+            . '.login #login{width:360px;max-width:calc(100% - 32px);padding:6vh 0 24px;}'
+            . $logo_css
+            . '.login .rrs-login-site-name{text-align:center;font-size:20px;font-weight:600;line-height:1.3;margin:0 0 20px;color:#1d2327;}'
+            . '.login form{border:0;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.08),0 1px 3px rgba(0,0,0,.06);padding:28px 28px 32px;margin-top:0;}'
+            . '.login label{font-weight:500;}'
+            . '.login form .input,.login input[type=text],.login input[type=password]{border-radius:8px;border:1px solid #c9cfc7;padding:6px 12px;font-size:16px;box-shadow:none;}'
+            . '.login form .input:focus,.login input[type=text]:focus,.login input[type=password]:focus{border-color:var(--rrs-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--rrs-accent) 25%,transparent);outline:0;}'
+            . '.login .button.wp-hide-pw .dashicons{color:var(--rrs-accent);}'
+            . '.login .button-primary{background:var(--rrs-accent);border-color:var(--rrs-accent);border-radius:8px;box-shadow:none;text-shadow:none;padding:4px 20px;font-weight:600;}'
+            . '.login .button-primary:hover,.login .button-primary:focus{background:color-mix(in srgb,var(--rrs-accent) 85%,#000);border-color:color-mix(in srgb,var(--rrs-accent) 85%,#000);}'
+            . '.login .button-primary:focus{box-shadow:0 0 0 2px #fff,0 0 0 4px var(--rrs-accent);}'
+            . '.login input[type=checkbox]:focus{border-color:var(--rrs-accent);box-shadow:0 0 0 1px var(--rrs-accent);}'
+            . '.login #nav,.login #backtoblog{text-align:center;padding:0;}'
+            . '.login #nav a,.login #backtoblog a,.login .privacy-policy-link{color:#50575e;}'
+            . '.login #nav a:hover,.login #backtoblog a:hover,.login .privacy-policy-link:hover{color:var(--rrs-accent);}'
+            . '.login .message,.login .notice,.login .success{border-radius:8px;border-left-color:var(--rrs-accent);box-shadow:0 1px 3px rgba(0,0,0,.06);}'
+            . '.login .language-switcher{opacity:.85;}';
+
+        echo '<style id="rrs-login-style">' . $css . '</style>';
     }
 
     protected function is_supported_preview_post_type($post) {
