@@ -4,7 +4,7 @@ Tags: import, json, acf, drupal
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 1.5.19
+Stable tag: 1.6.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -31,6 +31,15 @@ Importa contenuti JSON da endpoint esterno (es. Drupal) e li salva in WordPress,
 - Se abiliti il parent linking, lo Step 1 importa prima tutti i contenuti e poi esegue un secondo giro per valorizzare post_parent.
 
 == Changelog ==
+
+= 1.6.0 =
+* FEATURE: Supporto multilingua con rilevamento automatico di WPML o Polylang
+* FEATURE: Import di tutte le lingue in un solo passaggio; selezione delle lingue da importare (Step 1 rileva le lingue presenti nel JSON)
+* FEATURE: Le traduzioni Drupal (stesso NID) vengono collegate come traduzioni in WPML/Polylang durante l import
+* FEATURE: Pulsante "Collega traduzioni" per collegare i contenuti importati in precedenza
+* FIX CRITICO: il reimport di una lingua non sovrascrive piu il post di un altra lingua (match su uuid/nid + langcode)
+* FIX: "Elimina doppi importati" non considera piu duplicate le traduzioni dello stesso nodo
+* FIX: il secondo passaggio parent collega il parent nella stessa lingua del figlio
 
 = 1.5.19 =
 * IMPROVEMENT: Spostata la pagina plugin sotto menu admin condiviso "Area051"

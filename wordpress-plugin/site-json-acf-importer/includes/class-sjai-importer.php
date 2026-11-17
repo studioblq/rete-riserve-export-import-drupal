@@ -15,6 +15,10 @@ class SJAI_Importer {
     const NONCE_ACTION_SAVE_MAPPING = 'sjai_save_mapping';
     const NONCE_ACTION_APPLY_MAPPING = 'sjai_apply_mapping';
     const NONCE_ACTION_CLEAN_DUPLICATES = 'sjai_cleanup_duplicates';
+    const NONCE_ACTION_LINK_TRANSLATIONS = 'sjai_link_translations';
+
+    /** @var SJAI_Multilang|null */
+    protected $multilang = null;
 
     // Guards to keep async batch requests under hosting limits.
     protected $sideload_deadline_ts = 0.0;
@@ -48,8 +52,16 @@ class SJAI_Importer {
         add_action('admin_post_sjai_save_mapping', array($this, 'handle_save_mapping'));
         add_action('admin_post_sjai_apply_mapping', array($this, 'handle_apply_mapping'));
         add_action('admin_post_sjai_cleanup_duplicates', array($this, 'handle_cleanup_duplicates'));
+        add_action('admin_post_sjai_link_translations', array($this, 'handle_link_translations'));
         add_action('wp_ajax_sjai_start_async_import', array($this, 'ajax_start_async_import'));
         add_action('wp_ajax_sjai_process_batch', array($this, 'ajax_process_batch'));
+    }
+
+    protected function ml() {
+        if ($this->multilang === null) {
+            $this->multilang = new SJAI_Multilang();
+        }
+        return $this->multilang;
     }
 
     public function register_admin_page() {
@@ -123,6 +135,17 @@ class SJAI_Importer {
         $settings['import_start_record'] = isset($_POST['import_start_record']) ? max(1, absint($_POST['import_start_record'])) : 1;
         $settings['import_end_record'] = isset($_POST['import_end_record']) ? absint($_POST['import_end_record']) : 0;
         $settings['import_max_items'] = isset($_POST['import_max_items']) ? absint($_POST['import_max_items']) : 0;
+        $settings['enable_translation_linking'] = !empty($_POST['enable_translation_linking']) ? 1 : 0;
+        $settings['import_languages'] = array();
+        if (isset($_POST['import_languages']) && is_array($_POST['import_languages'])) {
+            foreach (wp_unslash($_POST['import_languages']) as $langcode) {
+                $langcode = sanitize_key((string) $langcode);
+                if ($langcode !== '') {
+                    $settings['import_languages'][] = $langcode;
+                }
+            }
+            $settings['import_languages'] = array_values(array_unique($settings['import_languages']));
+        }
 
         if ($settings['import_end_record'] > 0 && $settings['import_end_record'] < $settings['import_start_record']) {
             $settings['import_end_record'] = $settings['import_start_record'];
@@ -517,6 +540,8 @@ class SJAI_Importer {
         echo '</td>';
         echo '</tr>';
 
+        $this->render_language_settings_rows($settings, $schema);
+
         echo '<tr>';
         echo '<th scope="row"><label for="import_start_record">' . esc_html__('Import: record da', 'site-json-acf-importer') . '</label></th>';
         echo '<td>';
@@ -595,6 +620,16 @@ class SJAI_Importer {
             echo '<div style="margin-top:10px;">';
             wp_nonce_field('sjai_async_import_nonce', 'sjai_async_import_nonce_field');
             echo '<button type="button" class="button button-primary" id="sjai-async-import-btn" style="margin-top:10px;">' . esc_html__('Importa dati (asincrono)', 'site-json-acf-importer') . '</button>';
+            echo '</div>';
+
+            echo '<div style="margin-top:12px;max-width:1100px;border:1px solid #dcdcde;background:#fff;padding:12px;border-radius:4px;">';
+            echo '<h3 style="margin-top:0;">' . esc_html__('Collega traduzioni esistenti', 'site-json-acf-importer') . '</h3>';
+            echo '<p style="margin:0 0 10px;">' . esc_html__('Per i contenuti già importati: imposta la lingua (WPML/Polylang) dal meta _sjai_source_langcode e collega come traduzioni i post con lo stesso NID Drupal. Non modifica i contenuti.', 'site-json-acf-importer') . '</p>';
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+            wp_nonce_field(self::NONCE_ACTION_LINK_TRANSLATIONS);
+            echo '<input type="hidden" name="action" value="sjai_link_translations" />';
+            echo '<button type="submit" class="button button-secondary"' . ($this->ml()->is_active() ? '' : ' disabled') . '>' . esc_html__('Collega traduzioni', 'site-json-acf-importer') . '</button>';
+            echo '</form>';
             echo '</div>';
 
             echo '<div style="margin-top:12px;max-width:1100px;border:1px solid #dcdcde;background:#fff;padding:12px;border-radius:4px;">';
@@ -691,6 +726,360 @@ class SJAI_Importer {
         echo '</div>';
     }
 
+    protected function render_language_settings_rows($settings, $schema) {
+        $ml = $this->ml();
+        $discovered = isset($schema['langcodes']) && is_array($schema['langcodes']) ? $schema['langcodes'] : array();
+        $selected = isset($settings['import_languages']) && is_array($settings['import_languages']) ? $settings['import_languages'] : array();
+
+        echo '<tr><th colspan="2"><h3 style="margin:10px 0 0;">' . esc_html__('Lingue e traduzioni', 'site-json-acf-importer') . '</h3></th></tr>';
+
+        echo '<tr>';
+        echo '<th scope="row">' . esc_html__('Plugin multilingua', 'site-json-acf-importer') . '</th>';
+        echo '<td>';
+        if ($ml->is_active()) {
+            echo '<strong>' . esc_html($ml->get_provider_label()) . '</strong> ';
+            echo '<span class="description">' . esc_html(sprintf(__('lingue configurate: %s', 'site-json-acf-importer'), implode(', ', $ml->get_languages()))) . '</span>';
+        } else {
+            echo '<em>' . esc_html__('Nessuno rilevato (WPML o Polylang). La lingua viene salvata solo come meta _sjai_source_langcode.', 'site-json-acf-importer') . '</em>';
+        }
+        echo '</td>';
+        echo '</tr>';
+
+        echo '<tr>';
+        echo '<th scope="row">' . esc_html__('Collega traduzioni', 'site-json-acf-importer') . '</th>';
+        echo '<td>';
+        echo '<label><input type="checkbox" name="enable_translation_linking" value="1" ' . checked(1, $settings['enable_translation_linking'], false) . ' /> ' . esc_html__('Imposta la lingua del post e collega le traduzioni che hanno lo stesso NID Drupal.', 'site-json-acf-importer') . '</label>';
+        echo '</td>';
+        echo '</tr>';
+
+        echo '<tr>';
+        echo '<th scope="row">' . esc_html__('Lingue da importare', 'site-json-acf-importer') . '</th>';
+        echo '<td>';
+        $codes = array_values(array_unique(array_merge(array_keys($discovered), $selected)));
+        if (empty($codes)) {
+            echo '<p class="description">' . esc_html__('Esegui lo Step 1 (Analizza JSON) per vedere le lingue presenti nel JSON. Finché non ne selezioni nessuna vengono importate tutte.', 'site-json-acf-importer') . '</p>';
+        } else {
+            foreach ($codes as $code) {
+                $count = isset($discovered[$code]) ? (int) $discovered[$code] : 0;
+                $label = $code . ' (' . sprintf(_n('%d record', '%d record', $count, 'site-json-acf-importer'), $count) . ')';
+                if ($ml->is_active()) {
+                    $wp_lang = $ml->map_langcode($code);
+                    $label .= $wp_lang !== ''
+                        ? ' → ' . $ml->get_provider_label() . ': ' . $wp_lang
+                        : ' → ' . __('lingua non configurata in WordPress', 'site-json-acf-importer');
+                }
+                echo '<label style="display:block;margin-bottom:4px;"><input type="checkbox" name="import_languages[]" value="' . esc_attr($code) . '" ' . checked(in_array($code, $selected, true), true, false) . ' /> ' . esc_html($label) . '</label>';
+            }
+            echo '<p class="description">' . esc_html__('Nessuna selezionata = tutte le lingue. I record di altre lingue vengono saltati (anche dal conteggio).', 'site-json-acf-importer') . '</p>';
+        }
+        echo '</td>';
+        echo '</tr>';
+    }
+
+    protected function get_item_langcode($item) {
+        if (!is_array($item) || !isset($item['langcode'])) {
+            return '';
+        }
+        return sanitize_key($this->extract_scalar_value($item['langcode']));
+    }
+
+    /**
+     * TRUE if the item language is among the languages selected for import.
+     */
+    protected function item_passes_language_filter($item, $settings) {
+        $selected = isset($settings['import_languages']) && is_array($settings['import_languages']) ? $settings['import_languages'] : array();
+        if (empty($selected)) {
+            return true;
+        }
+        return in_array($this->get_item_langcode($item), $selected, true);
+    }
+
+    /**
+     * Sets the post language (WPML/Polylang) and links it to its translations.
+     */
+    protected function apply_translation_for_post($post_id, $post_type, $settings) {
+        $out = array(
+            'status' => 'disabled',
+            'lang' => '',
+            'linked' => false,
+            'conflicts' => array(),
+        );
+
+        if (empty($settings['enable_translation_linking'])) {
+            return $out;
+        }
+
+        $ml = $this->ml();
+        if (!$ml->is_active()) {
+            $out['status'] = 'no_plugin';
+            return $out;
+        }
+
+        $langcode = (string) get_post_meta($post_id, '_sjai_source_langcode', true);
+        if ($langcode === '') {
+            $out['status'] = 'no_langcode';
+            return $out;
+        }
+
+        if (!$ml->is_translated_post_type($post_type)) {
+            $out['status'] = 'post_type_not_translated';
+            $out['lang'] = $langcode;
+            return $out;
+        }
+
+        $lang = $ml->map_langcode($langcode);
+        if ($lang === '') {
+            $out['status'] = 'language_not_configured';
+            $out['lang'] = $langcode;
+            return $out;
+        }
+
+        if ($ml->get_post_language($post_id) !== $lang) {
+            $ml->set_post_language($post_id, $lang, $post_type);
+        }
+        $out['status'] = 'set';
+        $out['lang'] = $lang;
+
+        $link = $this->link_translation_group_for_post($post_id, $post_type);
+        $out['linked'] = $link['linked'];
+        $out['conflicts'] = $link['conflicts'];
+
+        return $out;
+    }
+
+    /**
+     * Links all imported posts sharing the same Drupal nid (or uuid) as translations.
+     */
+    protected function link_translation_group_for_post($post_id, $post_type) {
+        $result = array('linked' => false, 'conflicts' => array(), 'size' => 0);
+        $ml = $this->ml();
+
+        $meta_key = '_sjai_source_nid';
+        $meta_value = (string) get_post_meta($post_id, '_sjai_source_nid', true);
+        if ($meta_value === '' || $meta_value === '0') {
+            $meta_key = '_sjai_source_uuid';
+            $meta_value = (string) get_post_meta($post_id, '_sjai_source_uuid', true);
+        }
+        if ($meta_value === '') {
+            return $result;
+        }
+
+        $siblings = get_posts(array_merge(array(
+            'post_type' => $post_type,
+            'post_status' => 'any',
+            'fields' => 'ids',
+            'posts_per_page' => -1,
+            'orderby' => 'ID',
+            'order' => 'ASC',
+            'meta_key' => $meta_key,
+            'meta_value' => $meta_value,
+            'no_found_rows' => true,
+        ), $ml->unfiltered_query_args()));
+
+        $own_lang = $ml->map_langcode((string) get_post_meta($post_id, '_sjai_source_langcode', true));
+        $group = array();
+        if ($own_lang !== '') {
+            $group[$own_lang] = (int) $post_id;
+        }
+        $source_lang = '';
+
+        foreach ((array) $siblings as $sibling_id) {
+            $sibling_id = (int) $sibling_id;
+            $sibling_lang = $ml->map_langcode((string) get_post_meta($sibling_id, '_sjai_source_langcode', true));
+            if ($sibling_lang === '') {
+                continue;
+            }
+
+            if (isset($group[$sibling_lang]) && $group[$sibling_lang] !== $sibling_id) {
+                $result['conflicts'][] = sprintf(
+                    'NID/UUID %s: post %d e %d sono entrambi in lingua %s. Collegato %d (usa "Elimina doppi importati").',
+                    $meta_value,
+                    $group[$sibling_lang],
+                    $sibling_id,
+                    $sibling_lang,
+                    $group[$sibling_lang]
+                );
+                continue;
+            }
+
+            if ($ml->get_post_language($sibling_id) !== $sibling_lang) {
+                $ml->set_post_language($sibling_id, $sibling_lang, $post_type);
+            }
+            $group[$sibling_lang] = $sibling_id;
+
+            if ($source_lang === '' && (string) get_post_meta($sibling_id, '_sjai_source_is_original', true) === '1') {
+                $source_lang = $sibling_lang;
+            }
+        }
+
+        if ($source_lang === '') {
+            $original = $ml->map_langcode((string) get_post_meta($post_id, '_sjai_source_original_langcode', true));
+            if ($original !== '' && isset($group[$original])) {
+                $source_lang = $original;
+            }
+        }
+
+        $result['size'] = count($group);
+        if (count($group) < 2) {
+            return $result;
+        }
+
+        $link = $ml->link_translations($group, $post_type, $source_lang);
+        $result['linked'] = $link['linked'];
+        $result['conflicts'] = array_merge($result['conflicts'], $link['conflicts']);
+
+        return $result;
+    }
+
+    protected function empty_translation_stats() {
+        return array(
+            'language_set' => 0,
+            'linked' => 0,
+            'no_plugin' => 0,
+            'no_langcode' => 0,
+            'post_type_not_translated' => 0,
+            'language_not_configured' => 0,
+            'missing_languages' => array(),
+            'conflicts' => array(),
+        );
+    }
+
+    protected function accumulate_translation_stats($stats, $result) {
+        if (!is_array($result) || empty($result['translation']) || !is_array($result['translation'])) {
+            return $stats;
+        }
+
+        $t = $result['translation'];
+        $status = isset($t['status']) ? $t['status'] : '';
+
+        if ($status === 'set') {
+            $stats['language_set']++;
+        } elseif (isset($stats[$status]) && is_int($stats[$status])) {
+            $stats[$status]++;
+        }
+
+        if ($status === 'language_not_configured' && !empty($t['lang']) && !in_array($t['lang'], $stats['missing_languages'], true)) {
+            $stats['missing_languages'][] = $t['lang'];
+        }
+
+        if (!empty($t['linked'])) {
+            $stats['linked']++;
+        }
+
+        if (!empty($t['conflicts']) && count($stats['conflicts']) < 30) {
+            $stats['conflicts'] = array_slice(array_values(array_unique(array_merge($stats['conflicts'], $t['conflicts']))), 0, 30);
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Scenario B: links translations of posts imported earlier.
+     */
+    public function handle_link_translations() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('Non autorizzato.', 'site-json-acf-importer'));
+        }
+
+        check_admin_referer(self::NONCE_ACTION_LINK_TRANSLATIONS);
+
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(0);
+        }
+
+        $settings = $this->get_settings();
+        $settings['enable_translation_linking'] = 1;
+        $ml = $this->ml();
+
+        $result = array(
+            'provider' => $ml->get_provider_label(),
+            'posts' => 0,
+            'groups' => 0,
+            'groups_linked' => 0,
+            'stats' => $this->empty_translation_stats(),
+        );
+
+        if ($ml->is_active()) {
+            $post_ids = get_posts(array_merge(array(
+                'post_type' => $this->get_import_target_post_types($settings),
+                'post_status' => 'any',
+                'fields' => 'ids',
+                'posts_per_page' => -1,
+                'orderby' => 'ID',
+                'order' => 'ASC',
+                'meta_key' => '_sjai_source_langcode',
+                'meta_compare' => 'EXISTS',
+                'no_found_rows' => true,
+            ), $ml->unfiltered_query_args()));
+
+            $done_groups = array();
+            foreach ((array) $post_ids as $post_id) {
+                $post_id = (int) $post_id;
+                $post_type = get_post_type($post_id);
+                if (!$post_type) {
+                    continue;
+                }
+                $result['posts']++;
+
+                $group_key = $post_type . '|' . (string) get_post_meta($post_id, '_sjai_source_nid', true) . '|' . (string) get_post_meta($post_id, '_sjai_source_uuid', true);
+                if (isset($done_groups[$group_key])) {
+                    continue;
+                }
+                $done_groups[$group_key] = true;
+                $result['groups']++;
+
+                $translation = $this->apply_translation_for_post($post_id, $post_type, $settings);
+                $result['stats'] = $this->accumulate_translation_stats($result['stats'], array('translation' => $translation));
+                if (!empty($translation['linked'])) {
+                    $result['groups_linked']++;
+                }
+            }
+        }
+
+        set_transient('sjai_last_translation_link_' . get_current_user_id(), $result, MINUTE_IN_SECONDS * 10);
+
+        wp_safe_redirect(add_query_arg(
+            array(
+                'page' => 'site-json-acf-importer',
+                'sjai_notice' => $ml->is_active() ? 'translations_linked' : 'translations_no_plugin',
+            ),
+            admin_url('admin.php')
+        ));
+        exit;
+    }
+
+    protected function render_translation_link_notice() {
+        $result = get_transient('sjai_last_translation_link_' . get_current_user_id());
+        if (!is_array($result)) {
+            return;
+        }
+        $stats = isset($result['stats']) ? $result['stats'] : $this->empty_translation_stats();
+
+        echo '<div class="notice notice-success is-dismissible"><p>';
+        echo esc_html(sprintf(
+            __('Collegamento traduzioni (%1$s) completato. Post analizzati: %2$d. Gruppi NID: %3$d. Gruppi collegati: %4$d.', 'site-json-acf-importer'),
+            $result['provider'],
+            (int) $result['posts'],
+            (int) $result['groups'],
+            (int) $result['groups_linked']
+        ));
+        echo '</p>';
+        if (!empty($stats['missing_languages'])) {
+            echo '<p>' . esc_html(sprintf(__('Lingue non configurate in WordPress: %s', 'site-json-acf-importer'), implode(', ', $stats['missing_languages']))) . '</p>';
+        }
+        if (!empty($stats['post_type_not_translated'])) {
+            echo '<p>' . esc_html(sprintf(__('Gruppi saltati perché il post type non è traducibile: %d', 'site-json-acf-importer'), (int) $stats['post_type_not_translated'])) . '</p>';
+        }
+        if (!empty($stats['conflicts'])) {
+            echo '<p><strong>' . esc_html__('Conflitti:', 'site-json-acf-importer') . '</strong></p><ul style="list-style:disc;padding-left:20px;">';
+            foreach ($stats['conflicts'] as $conflict) {
+                echo '<li>' . esc_html($conflict) . '</li>';
+            }
+            echo '</ul>';
+        }
+        echo '</div>';
+    }
+
     protected function render_notice() {
         if (empty($_GET['sjai_notice'])) {
             return;
@@ -720,6 +1109,14 @@ class SJAI_Importer {
             echo '<div class="notice notice-success is-dismissible"><p>' . esc_html(sprintf(__('Pulizia duplicati completata. Gruppi: %d. Post eliminati: %d. Allegati eliminati: %d.', 'site-json-acf-importer'), $duplicate_groups, $deleted_posts, $deleted_attachments)) . '</p></div>';
         }
 
+        if ($notice === 'translations_linked') {
+            $this->render_translation_link_notice();
+        }
+
+        if ($notice === 'translations_no_plugin') {
+            echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html__('Nessun plugin multilingua attivo (WPML o Polylang): impossibile collegare le traduzioni.', 'site-json-acf-importer') . '</p></div>';
+        }
+
         if ($notice === 'duplicate_cleanup_none') {
             echo '<div class="notice notice-info is-dismissible"><p>' . esc_html__('Nessun duplicato importato trovato.', 'site-json-acf-importer') . '</p></div>';
         }
@@ -740,6 +1137,8 @@ class SJAI_Importer {
             'import_start_record' => 1,
             'import_end_record' => 0,
             'import_max_items' => 0,
+            'enable_translation_linking' => 1,
+            'import_languages' => array(),
             'type_map_ui' => array(),
             'acf_map_ui' => array(),
             'acf_map_path_ui' => array(),
@@ -763,6 +1162,10 @@ class SJAI_Importer {
 
         if (!is_array($settings['field_map_v2'])) {
             $settings['field_map_v2'] = array();
+        }
+
+        if (!is_array($settings['import_languages'])) {
+            $settings['import_languages'] = array();
         }
 
         return $settings;
@@ -869,6 +1272,7 @@ class SJAI_Importer {
         $preview_by_type = array();
         $preview_limit_per_type = 0;
         $analyzed = 0;
+        $langcodes = array();
 
         foreach ($data as $index => $item) {
             if (!is_array($item)) {
@@ -877,6 +1281,10 @@ class SJAI_Importer {
             }
 
             $analyzed++;
+            $item_langcode = $this->get_item_langcode($item);
+            if ($item_langcode !== '') {
+                $langcodes[$item_langcode] = isset($langcodes[$item_langcode]) ? $langcodes[$item_langcode] + 1 : 1;
+            }
             $source_type = isset($item['type']) ? sanitize_key($item['type']) : 'unknown';
             if ($source_type === '') {
                 $source_type = 'unknown';
@@ -926,9 +1334,11 @@ class SJAI_Importer {
                 $schema_field_paths[$type][$field] = $paths;
             }
         }
+        ksort($langcodes);
         update_option(self::OPTION_SCHEMA_KEY, array(
             'types' => $schema_types,
             'field_paths' => $schema_field_paths,
+            'langcodes' => $langcodes,
         ));
         update_option(self::OPTION_PREVIEW_KEY, array(
             'by_type' => $preview_by_type,
@@ -940,6 +1350,7 @@ class SJAI_Importer {
             'analyzed' => $analyzed,
             'skipped' => $skipped,
             'types_detected' => array_keys($schema_types),
+            'langcodes_detected' => $langcodes,
         );
     }
 
@@ -975,7 +1386,14 @@ class SJAI_Importer {
                     }
                     $item_nid = isset($drupal_item['nid']) ? (string) absint($drupal_item['nid']) : '';
                     if ($item_nid !== '' && $item_nid !== '0') {
-                        $drupal_nid_map[$item_nid] = $drupal_item;
+                        // nid|langcode for multilingual endpoints; bare nid keeps the first row (original language).
+                        $item_lang = $this->get_item_langcode($drupal_item);
+                        if ($item_lang !== '') {
+                            $drupal_nid_map[$item_nid . '|' . $item_lang] = $drupal_item;
+                        }
+                        if (!isset($drupal_nid_map[$item_nid])) {
+                            $drupal_nid_map[$item_nid] = $drupal_item;
+                        }
                     }
                 }
                 $this->log_parent_debug('Fetched endpoint: ' . count($drupal_nid_map) . ' items in nid map');
@@ -995,8 +1413,11 @@ class SJAI_Importer {
             $item = null;
             $post_nid = get_post_meta($post_id, '_sjai_source_nid', true);
             $post_nid_str = $post_nid !== '' && $post_nid !== false ? (string) absint($post_nid) : '';
+            $post_langcode = (string) get_post_meta($post_id, '_sjai_source_langcode', true);
 
-            if ($post_nid_str !== '' && isset($drupal_nid_map[$post_nid_str])) {
+            if ($post_nid_str !== '' && $post_langcode !== '' && isset($drupal_nid_map[$post_nid_str . '|' . $post_langcode])) {
+                $item = $drupal_nid_map[$post_nid_str . '|' . $post_langcode];
+            } elseif ($post_nid_str !== '' && isset($drupal_nid_map[$post_nid_str])) {
                 $item = $drupal_nid_map[$post_nid_str];
             }
 
@@ -1030,7 +1451,7 @@ class SJAI_Importer {
             $all_parent_post_ids = array();
 
             foreach ($parent_references as $ref) {
-                $found = $this->find_parent_post_id_by_merge_field($match_field, $ref);
+                $found = $this->find_parent_post_id_by_merge_field($match_field, $ref, $post_langcode);
                 $this->log_parent_debug('Post ' . $post_id . ' ref=' . (string) $ref . ' found=' . (int) $found);
                 if ($found > 0 && $found !== $post_id) {
                     $all_parent_post_ids[] = $found;
@@ -1081,7 +1502,7 @@ class SJAI_Importer {
         return $result;
     }
 
-    protected function find_parent_post_id_by_merge_field($merge_field, $merge_value) {
+    protected function find_parent_post_id_by_merge_field($merge_field, $merge_value, $langcode = '') {
         $merge_field = sanitize_key((string) $merge_field);
         $raw_value = trim((string) $merge_value);
         if ($merge_field === '' || $raw_value === '') {
@@ -1111,18 +1532,15 @@ class SJAI_Importer {
             }
 
             foreach ($meta_values as $meta_value) {
-                $posts = get_posts(array(
-                    'post_type' => 'any',
-                    'post_status' => 'any',
-                    'fields' => 'ids',
-                    'posts_per_page' => 1,
-                    'meta_key' => $meta_key,
-                    'meta_value' => $meta_value,
-                ));
+                // Same language as the child first, then any language.
+                $found = $this->find_post_id_by_meta($meta_key, array($meta_value), array('any'), $langcode);
+                if (!$found && $langcode !== '') {
+                    $found = $this->find_post_id_by_meta($meta_key, array($meta_value), array('any'), '');
+                }
 
-                if (!empty($posts)) {
-                    $this->log_parent_debug('Parent match hit meta_key=' . $meta_key . ' value=' . (string) $meta_value . ' -> post_id=' . (int) $posts[0]);
-                    return (int) $posts[0];
+                if ($found) {
+                    $this->log_parent_debug('Parent match hit meta_key=' . $meta_key . ' value=' . (string) $meta_value . ' lang=' . $langcode . ' -> post_id=' . (int) $found);
+                    return (int) $found;
                 }
             }
         }
@@ -1158,8 +1576,10 @@ class SJAI_Importer {
         $created = 0;
         $updated = 0;
         $skipped = 0;
+        $filtered_language = 0;
         $errors = array();
         $imported_post_ids = array();
+        $translation_stats = $this->empty_translation_stats();
 
         foreach ($data as $index => $item) {
             $record_number = (int) $index + 1;
@@ -1181,9 +1601,15 @@ class SJAI_Importer {
                 continue;
             }
 
+            if (!$this->item_passes_language_filter($item, $settings)) {
+                $filtered_language++;
+                continue;
+            }
+
             $processed++;
 
             $result = $this->import_single_item($item, $settings, $type_map, $acf_map, $acf_path_map, $field_map_v2, true);
+            $translation_stats = $this->accumulate_translation_stats($translation_stats, $result);
             if ($result['status'] === 'created') {
                 $created++;
                 if (!empty($result['post_id'])) {
@@ -1229,6 +1655,8 @@ class SJAI_Importer {
             'created' => $created,
             'updated' => $updated,
             'skipped' => $skipped,
+            'filtered_language' => $filtered_language,
+            'translations' => $translation_stats,
             'parent_pass' => $parent_result,
             'errors' => $errors,
         );
@@ -1312,12 +1740,12 @@ class SJAI_Importer {
         $langcode = isset($item['langcode']) ? sanitize_key($item['langcode']) : '';
 
         $reference_field = isset($settings['merge_reference_field']) ? sanitize_key($settings['merge_reference_field']) : 'uuid';
-        $existing_post_id = $this->find_existing_post_by_reference($item, $reference_field, $post_type);
+        $existing_post_id = $this->find_existing_post_by_reference($item, $reference_field, $post_type, $langcode);
         if (!$existing_post_id) {
-            $existing_post_id = $this->find_existing_post($uuid, $nid, $post_type);
+            $existing_post_id = $this->find_existing_post($uuid, $nid, $post_type, $langcode);
         }
         if (!$existing_post_id) {
-            $existing_post_id = $this->find_existing_post_by_source_identity($item, $post_type);
+            $existing_post_id = $this->find_existing_post_by_source_identity($item, $post_type, $langcode);
         }
 
         $title = $this->extract_scalar_value(isset($item['title']) ? $item['title'] : '');
@@ -1371,8 +1799,17 @@ class SJAI_Importer {
         if ($langcode !== '') {
             update_post_meta($post_id, '_sjai_source_langcode', $langcode);
         }
+        if (array_key_exists('default_langcode', $item)) {
+            update_post_meta($post_id, '_sjai_source_is_original', !empty($item['default_langcode']) ? 1 : 0);
+        }
+        if (!empty($item['original_langcode'])) {
+            update_post_meta($post_id, '_sjai_source_original_langcode', sanitize_key($this->extract_scalar_value($item['original_langcode'])));
+        }
 
         $this->store_source_index_meta($post_id, $item);
+
+        // Language first: Polylang/WPML use it when terms and relations are assigned.
+        $translation = $this->apply_translation_for_post($post_id, $post_type, $settings);
 
         update_post_meta($post_id, '_sjai_raw_item', wp_json_encode($item, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
@@ -1387,6 +1824,7 @@ class SJAI_Importer {
         return array(
             'status' => $action,
             'post_id' => $post_id,
+            'translation' => $translation,
         );
     }
 
@@ -1413,37 +1851,72 @@ class SJAI_Importer {
         }
     }
 
-    protected function find_existing_post($uuid, $nid, $post_type) {
+    protected function find_existing_post($uuid, $nid, $post_type, $langcode = '') {
         $search_types = array($post_type, 'any');
 
         if ($uuid !== '') {
-            foreach ($search_types as $search_type) {
-                $posts = get_posts(array(
-                    'post_type' => $search_type,
-                    'post_status' => 'any',
-                    'fields' => 'ids',
-                    'posts_per_page' => 1,
-                    'meta_key' => '_sjai_source_uuid',
-                    'meta_value' => $uuid,
-                ));
-                if (!empty($posts)) {
-                    return (int) $posts[0];
-                }
+            $found = $this->find_post_id_by_meta('_sjai_source_uuid', array($uuid), $search_types, $langcode);
+            if ($found) {
+                return $found;
             }
         }
 
         if ($nid > 0) {
-            foreach ($search_types as $search_type) {
-                $posts = get_posts(array(
+            $found = $this->find_post_id_by_meta('_sjai_source_nid', array($nid), $search_types, $langcode);
+            if ($found) {
+                return $found;
+            }
+        }
+
+        return 0;
+    }
+
+    /**
+     * Finds an imported post by meta, preferring the one in the given language.
+     *
+     * Drupal translations share nid/uuid, so with a langcode only a post in the
+     * same language (or a legacy post without language meta) is a match.
+     */
+    protected function find_post_id_by_meta($meta_key, $meta_values, $search_types, $langcode = '') {
+        $langcode = (string) $langcode;
+
+        foreach ((array) $search_types as $search_type) {
+            foreach ((array) $meta_values as $meta_value) {
+                $args = array(
                     'post_type' => $search_type,
                     'post_status' => 'any',
                     'fields' => 'ids',
-                    'posts_per_page' => 1,
-                    'meta_key' => '_sjai_source_nid',
-                    'meta_value' => $nid,
-                ));
-                if (!empty($posts)) {
+                    'posts_per_page' => $langcode === '' ? 1 : 50,
+                    'meta_key' => $meta_key,
+                    'meta_value' => $meta_value,
+                    'no_found_rows' => true,
+                );
+                if ($langcode !== '') {
+                    $args['orderby'] = 'ID';
+                    $args['order'] = 'ASC';
+                }
+                $posts = get_posts(array_merge($args, $this->ml()->unfiltered_query_args()));
+
+                if (empty($posts)) {
+                    continue;
+                }
+
+                if ($langcode === '') {
                     return (int) $posts[0];
+                }
+
+                $legacy = 0;
+                foreach ($posts as $candidate) {
+                    $candidate_lang = (string) get_post_meta((int) $candidate, '_sjai_source_langcode', true);
+                    if ($candidate_lang === $langcode) {
+                        return (int) $candidate;
+                    }
+                    if ($candidate_lang === '' && !$legacy) {
+                        $legacy = (int) $candidate;
+                    }
+                }
+                if ($legacy) {
+                    return $legacy;
                 }
             }
         }
@@ -1465,7 +1938,7 @@ class SJAI_Importer {
         return sanitize_text_field($raw);
     }
 
-    protected function find_existing_post_by_source_identity($item, $post_type) {
+    protected function find_existing_post_by_source_identity($item, $post_type, $langcode = '') {
         if (!is_array($item)) {
             return 0;
         }
@@ -1484,18 +1957,9 @@ class SJAI_Importer {
             }
 
             $meta_key = '_sjai_src_' . sanitize_key($identity_field);
-            foreach ($search_types as $search_type) {
-                $posts = get_posts(array(
-                    'post_type' => $search_type,
-                    'post_status' => 'any',
-                    'fields' => 'ids',
-                    'posts_per_page' => 1,
-                    'meta_key' => $meta_key,
-                    'meta_value' => $identity_value,
-                ));
-                if (!empty($posts)) {
-                    return (int) $posts[0];
-                }
+            $found = $this->find_post_id_by_meta($meta_key, array($identity_value), $search_types, $langcode);
+            if ($found) {
+                return $found;
             }
         }
 
@@ -1537,12 +2001,16 @@ class SJAI_Importer {
             '_sjai_src_slug',
         );
 
+        // Translations share uuid/nid: language is part of the identity.
+        $langcode = (string) get_post_meta($post_id, '_sjai_source_langcode', true);
+        $lang_suffix = $langcode !== '' ? '|lang:' . $langcode : '';
+
         foreach ($meta_keys as $meta_key) {
             $value = get_post_meta($post_id, $meta_key, true);
             if (is_string($value) || is_numeric($value)) {
                 $value = trim((string) $value);
                 if ($value !== '') {
-                    return $meta_key . ':' . $value;
+                    return $meta_key . ':' . $value . $lang_suffix;
                 }
             }
         }
@@ -1621,7 +2089,7 @@ class SJAI_Importer {
         return $duplicate_groups;
     }
 
-    protected function find_existing_post_by_reference($item, $reference_field, $post_type) {
+    protected function find_existing_post_by_reference($item, $reference_field, $post_type, $langcode = '') {
         if (!is_array($item)) {
             return 0;
         }
@@ -1651,22 +2119,7 @@ class SJAI_Importer {
             $meta_value = (string) $reference_value;
         }
 
-        $search_types = array($post_type, 'any');
-        foreach ($search_types as $search_type) {
-            $posts = get_posts(array(
-                'post_type' => $search_type,
-                'post_status' => 'any',
-                'fields' => 'ids',
-                'posts_per_page' => 1,
-                'meta_key' => $meta_key,
-                'meta_value' => $meta_value,
-            ));
-            if (!empty($posts)) {
-                return (int) $posts[0];
-            }
-        }
-
-        return 0;
+        return $this->find_post_id_by_meta($meta_key, array($meta_value), array($post_type, 'any'), $langcode);
     }
 
     protected function extract_term_names($value) {
@@ -2291,6 +2744,29 @@ function showResult(data){
     }
     if(data.parent_pass && data.parent_pass.linked){
         html += "Parent collegati: " + data.parent_pass.linked + "<br>";
+    }
+    if(data.filtered_language){
+        html += "Record esclusi dal filtro lingue: " + data.filtered_language + "<br>";
+    }
+    var tr = data.translations || null;
+    if(tr){
+        var esc = function(v){ var d = document.createElement("div"); d.textContent = String(v); return d.innerHTML; };
+        if(tr.no_plugin > 0){
+            html += "Traduzioni: nessun plugin multilingua attivo (WPML/Polylang)<br>";
+        } else {
+            html += "Lingua impostata: " + tr.language_set + " post, collegati come traduzione: " + tr.linked + "<br>";
+        }
+        if(tr.missing_languages && tr.missing_languages.length){
+            html += "<span style=\"color:#b32d2e;\">Lingue non configurate in WordPress: " + esc(tr.missing_languages.join(", ")) + "</span><br>";
+        }
+        if(tr.post_type_not_translated > 0){
+            html += "<span style=\"color:#b32d2e;\">Post type non traducibile: " + tr.post_type_not_translated + " post</span><br>";
+        }
+        if(tr.conflicts && tr.conflicts.length){
+            html += "<strong>Conflitti traduzioni:</strong><ul style=\"list-style:disc;padding-left:20px;margin:4px 0;\">";
+            tr.conflicts.forEach(function(c){ html += "<li>" + esc(c) + "</li>"; });
+            html += "</ul>";
+        }
     }
     if(data.errors && data.errors.length > 0){
         html += "<strong style=\"color:red;\">Errori: " + data.errors.length + "</strong>";
@@ -3701,7 +4177,7 @@ JS;
                 if ($max_items > 0 && $total >= $max_items) {
                     break;
                 }
-                if (is_array($item)) {
+                if (is_array($item) && $this->item_passes_language_filter($item, $settings)) {
                     $total++;
                 }
             }
@@ -3713,6 +4189,8 @@ JS;
                 'created' => 0,
                 'updated' => 0,
                 'skipped' => 0,
+                'filtered_language' => 0,
+                'translations' => $this->empty_translation_stats(),
                 'errors' => array(),
                 'image_stats' => array(
                     'attempted' => 0,
@@ -3845,7 +4323,17 @@ JS;
                 continue;
             }
 
+            if (!$this->item_passes_language_filter($item, $settings)) {
+                $state['filtered_language'] = isset($state['filtered_language']) ? (int) $state['filtered_language'] + 1 : 1;
+                $cursor = $index + 1;
+                continue;
+            }
+
             $result = $this->import_single_item($item, $settings, $type_map, $acf_map, $acf_path_map, $field_map_v2, true);
+            $state['translations'] = $this->accumulate_translation_stats(
+                isset($state['translations']) && is_array($state['translations']) ? $state['translations'] : $this->empty_translation_stats(),
+                $result
+            );
 
             if ($result['status'] === 'created') {
                 $state['created']++;
@@ -3930,6 +4418,8 @@ JS;
             'created' => $state['created'],
             'updated' => $state['updated'],
             'skipped' => $state['skipped'],
+            'filtered_language' => isset($state['filtered_language']) ? (int) $state['filtered_language'] : 0,
+            'translations' => isset($state['translations']) ? $state['translations'] : $this->empty_translation_stats(),
             'done' => $done,
             'errors' => array_slice($state['errors'], 0, 10),
             'parent_pass' => isset($state['parent_pass']) ? $state['parent_pass'] : null,

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Reti Riserve Setting
  * Description: Configura logo default e logo sticky con selezione media, poi aggiorna il logo al cambio sticky dell'header. Personalizza la pagina di accesso con logo e nome del sito.
- * Version: 1.1.0
+ * Version: 1.3.0
  * Author: Custom
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -12,6 +12,22 @@
 if (!defined('ABSPATH')) {
     exit;
 }
+
+// Another copy of this plugin (e.g. the old "setting" folder) is already loaded: stop here instead of a fatal error.
+// The class is registered at compile time, so detect the old copy by its unconditional bootstrap function.
+if (defined('RRS_SETTING_PLUGIN_FILE') || function_exists('reti_riserve_setting_bootstrap')) {
+    add_action('admin_notices', function () {
+        if (!current_user_can('activate_plugins')) {
+            return;
+        }
+        echo '<div class="notice notice-error"><p>'
+            . esc_html__('Reti Riserve Setting è installato due volte (cartelle "setting" e "retiriserve-setting"). Disattiva ed elimina la vecchia cartella "setting".', 'reti-riserve-setting')
+            . '</p></div>';
+    });
+    return;
+}
+
+define('RRS_SETTING_PLUGIN_FILE', __FILE__);
 
 class RetiRiserveSetting {
     const PARENT_MENU_SLUG = 'reti-riserve-suite';
@@ -138,6 +154,18 @@ jQuery(function($){
     bindMediaButton('#rrs-logo-sticky-btn', '#rrs_logo_sticky', '#rrs-logo-sticky-preview');
     bindMediaButton('#rrs-preview-default-btn', '#rrs_preview_default_image', '#rrs-preview-default-image-preview');
     bindMediaButton('#rrs-testata-default-btn', '#rrs_testata_default_image', '#rrs-testata-default-image-preview');
+    bindMediaButton('#rrs-login-logo-btn', '#rrs_login_logo_custom', '#rrs-login-logo-preview');
+    bindMediaButton('#rrs-login-bg-btn', '#rrs_login_background', '#rrs-login-bg-preview');
+
+    function toggleLoginLogoRow() {
+        $('#rrs-login-logo-custom-row').toggle($('#rrs_login_logo_source').val() === 'custom');
+    }
+    $(document).on('change', '#rrs_login_logo_source', toggleLoginLogoRow);
+    toggleLoginLogoRow();
+
+    $(document).on('input', '#rrs_login_overlay_opacity', function() {
+        $('#rrs-login-overlay-opacity-value').text($(this).val() + '%');
+    });
 });
 JS;
 
@@ -219,25 +247,93 @@ JS;
         echo '</td>';
         echo '</tr>';
 
+        $login_logo_custom = (string) $settings['login_logo_custom'];
+        $login_background = (string) $settings['login_background'];
+
         echo '<tr><th colspan="2"><h2 style="margin:10px 0 0;">' . esc_html__('Pagina di accesso', 'reti-riserve-setting') . '</h2></th></tr>';
 
         echo '<tr>';
         echo '<th scope="row">' . esc_html__('Personalizza login', 'reti-riserve-setting') . '</th>';
         echo '<td>';
-        echo '<label><input type="checkbox" name="rrs_login_custom" value="1" ' . checked(1, (int) $settings['login_custom'], false) . '> ' . esc_html__('Usa il Logo Sticky e il nome del sito nella pagina wp-login.php', 'reti-riserve-setting') . '</label>';
-        echo '<p class="description">' . esc_html(sprintf(
-            __('Nome mostrato: "%s" (Impostazioni > Generali > Titolo del sito). Se il Logo Sticky è vuoto si usa il Logo Default.', 'reti-riserve-setting'),
-            get_bloginfo('name')
-        )) . '</p>';
+        echo '<label><input type="checkbox" name="rrs_login_custom" value="1" ' . checked(1, (int) $settings['login_custom'], false) . '> ' . esc_html__('Usa logo, sfondo e titolo personalizzati nella pagina wp-login.php', 'reti-riserve-setting') . '</label>';
+        echo ' <a href="' . esc_url(wp_login_url()) . '" target="_blank" rel="noopener">' . esc_html__('Apri anteprima login', 'reti-riserve-setting') . '</a>';
+        echo '<p class="description">' . esc_html__('Per vedere la pagina usa una finestra in incognito, altrimenti WordPress ti riporta in bacheca.', 'reti-riserve-setting') . '</p>';
         echo '</td>';
         echo '</tr>';
 
         echo '<tr>';
-        echo '<th scope="row"><label for="rrs_login_accent">' . esc_html__('Colore principale login', 'reti-riserve-setting') . '</label></th>';
+        echo '<th scope="row"><label for="rrs_login_title">' . esc_html__('Titolo sotto il logo', 'reti-riserve-setting') . '</label></th>';
+        echo '<td>';
+        echo '<input type="text" id="rrs_login_title" name="rrs_login_title" value="' . esc_attr($settings['login_title']) . '" class="regular-text" placeholder="Area di gestione">';
+        echo '</td>';
+        echo '</tr>';
+
+        echo '<tr>';
+        echo '<th scope="row"><label for="rrs_login_subtitle">' . esc_html__('Sottotitolo', 'reti-riserve-setting') . '</label></th>';
+        echo '<td>';
+        echo '<input type="text" id="rrs_login_subtitle" name="rrs_login_subtitle" value="' . esc_attr($settings['login_subtitle']) . '" class="regular-text" placeholder="Accedi per gestire i contenuti del sito">';
+        echo '<p class="description">' . esc_html__('Lascia vuoti titolo e sottotitolo per non mostrare testo sotto il logo.', 'reti-riserve-setting') . '</p>';
+        echo '</td>';
+        echo '</tr>';
+
+        echo '<tr>';
+        echo '<th scope="row"><label for="rrs_login_logo_source">' . esc_html__('Logo login', 'reti-riserve-setting') . '</label></th>';
+        echo '<td>';
+        echo '<select id="rrs_login_logo_source" name="rrs_login_logo_source">';
+        $logo_sources = array(
+            'sticky' => __('Logo Sticky', 'reti-riserve-setting'),
+            'default' => __('Logo Default', 'reti-riserve-setting'),
+            'custom' => __('Altro logo (scegli da Media)', 'reti-riserve-setting'),
+            'none' => __('Nessun logo (solo titolo)', 'reti-riserve-setting'),
+        );
+        foreach ($logo_sources as $value => $label) {
+            echo '<option value="' . esc_attr($value) . '" ' . selected($settings['login_logo_source'], $value, false) . '>' . esc_html($label) . '</option>';
+        }
+        echo '</select>';
+        echo '<p class="description">' . esc_html__('Il logo sta su una scheda bianca: usa una versione scura o a colori.', 'reti-riserve-setting') . '</p>';
+        echo '</td>';
+        echo '</tr>';
+
+        echo '<tr id="rrs-login-logo-custom-row">';
+        echo '<th scope="row"><label for="rrs_login_logo_custom">' . esc_html__('Altro logo', 'reti-riserve-setting') . '</label></th>';
+        echo '<td>';
+        echo '<input type="url" id="rrs_login_logo_custom" name="rrs_login_logo_custom" value="' . esc_attr($login_logo_custom) . '" class="regular-text" readonly>';
+        echo '<p>';
+        echo '<button type="button" class="button" id="rrs-login-logo-btn">' . esc_html__('Scegli da Media', 'reti-riserve-setting') . '</button> ';
+        echo '<button type="button" class="button" id="rrs-login-logo-btn-clear">' . esc_html__('Rimuovi', 'reti-riserve-setting') . '</button>';
+        echo '</p>';
+        echo '<img id="rrs-login-logo-preview" src="' . esc_url($login_logo_custom) . '" alt="" style="max-width:180px;height:auto;' . ($login_logo_custom === '' ? 'display:none;' : '') . '">';
+        echo '</td>';
+        echo '</tr>';
+
+        echo '<tr>';
+        echo '<th scope="row"><label for="rrs_login_background">' . esc_html__('Immagine di sfondo', 'reti-riserve-setting') . '</label></th>';
+        echo '<td>';
+        echo '<input type="url" id="rrs_login_background" name="rrs_login_background" value="' . esc_attr($login_background) . '" class="regular-text" readonly>';
+        echo '<p>';
+        echo '<button type="button" class="button" id="rrs-login-bg-btn">' . esc_html__('Scegli da Media', 'reti-riserve-setting') . '</button> ';
+        echo '<button type="button" class="button" id="rrs-login-bg-btn-clear">' . esc_html__('Rimuovi', 'reti-riserve-setting') . '</button>';
+        echo '</p>';
+        echo '<img id="rrs-login-bg-preview" src="' . esc_url($login_background) . '" alt="" style="max-width:240px;height:auto;' . ($login_background === '' ? 'display:none;' : '') . '">';
+        echo '<p class="description">' . esc_html__('Foto orizzontale, almeno 1920px di larghezza (es. panorama del Monte Bondone). Senza immagine si usa una sfumatura del colore overlay.', 'reti-riserve-setting') . '</p>';
+        echo '</td>';
+        echo '</tr>';
+
+        echo '<tr>';
+        echo '<th scope="row"><label for="rrs_login_overlay_color">' . esc_html__('Overlay sullo sfondo', 'reti-riserve-setting') . '</label></th>';
+        echo '<td>';
+        echo '<input type="color" id="rrs_login_overlay_color" name="rrs_login_overlay_color" value="' . esc_attr($settings['login_overlay_color']) . '"> ';
+        echo '<input type="range" id="rrs_login_overlay_opacity" name="rrs_login_overlay_opacity" min="0" max="95" step="5" value="' . esc_attr((string) (int) $settings['login_overlay_opacity']) . '" style="vertical-align:middle;width:200px;"> ';
+        echo '<span id="rrs-login-overlay-opacity-value">' . esc_html((int) $settings['login_overlay_opacity'] . '%') . '</span>';
+        echo '<p class="description">' . esc_html__('Colore e opacità del velo sopra la foto: più alto = foto meno visibile, testo più leggibile.', 'reti-riserve-setting') . '</p>';
+        echo '</td>';
+        echo '</tr>';
+
+        echo '<tr>';
+        echo '<th scope="row"><label for="rrs_login_accent">' . esc_html__('Colore pulsante e link', 'reti-riserve-setting') . '</label></th>';
         echo '<td>';
         echo '<input type="color" id="rrs_login_accent" name="rrs_login_accent" value="' . esc_attr($settings['login_accent']) . '">';
         echo '<p class="description">' . esc_html__('Pulsante "Accedi", bordo dei campi attivi e link.', 'reti-riserve-setting') . '</p>';
-        echo ' <a href="' . esc_url(wp_login_url()) . '" target="_blank" rel="noopener">' . esc_html__('Apri anteprima login', 'reti-riserve-setting') . '</a>';
         echo '</td>';
         echo '</tr>';
 
@@ -279,9 +375,22 @@ JS;
             'preview_default_image' => isset($_POST['rrs_preview_default_image']) ? esc_url_raw(trim(wp_unslash($_POST['rrs_preview_default_image']))) : '',
             'testata_default_image' => isset($_POST['rrs_testata_default_image']) ? esc_url_raw(trim(wp_unslash($_POST['rrs_testata_default_image']))) : '',
             'login_custom' => !empty($_POST['rrs_login_custom']) ? 1 : 0,
+            'login_title' => isset($_POST['rrs_login_title']) ? sanitize_text_field(wp_unslash($_POST['rrs_login_title'])) : '',
+            'login_subtitle' => isset($_POST['rrs_login_subtitle']) ? sanitize_text_field(wp_unslash($_POST['rrs_login_subtitle'])) : '',
+            'login_logo_source' => isset($_POST['rrs_login_logo_source']) ? sanitize_key(wp_unslash($_POST['rrs_login_logo_source'])) : 'sticky',
+            'login_logo_custom' => isset($_POST['rrs_login_logo_custom']) ? esc_url_raw(trim(wp_unslash($_POST['rrs_login_logo_custom']))) : '',
+            'login_background' => isset($_POST['rrs_login_background']) ? esc_url_raw(trim(wp_unslash($_POST['rrs_login_background']))) : '',
+            'login_overlay_color' => isset($_POST['rrs_login_overlay_color']) ? (string) sanitize_hex_color(wp_unslash($_POST['rrs_login_overlay_color'])) : '',
+            'login_overlay_opacity' => isset($_POST['rrs_login_overlay_opacity']) ? min(95, max(0, absint($_POST['rrs_login_overlay_opacity']))) : 60,
             'login_accent' => isset($_POST['rrs_login_accent']) ? (string) sanitize_hex_color(wp_unslash($_POST['rrs_login_accent'])) : '',
         );
 
+        if (!in_array($settings['login_logo_source'], array('sticky', 'default', 'custom', 'none'), true)) {
+            $settings['login_logo_source'] = 'sticky';
+        }
+        if ($settings['login_overlay_color'] === '') {
+            $settings['login_overlay_color'] = '#1f4d2e';
+        }
         if ($settings['login_accent'] === '') {
             $settings['login_accent'] = '#2e7d4f';
         }
@@ -568,6 +677,13 @@ JS;
                 'preview_default_image' => '',
                 'testata_default_image' => '',
                 'login_custom' => 1,
+                'login_title' => 'Area di gestione',
+                'login_subtitle' => 'Accedi per gestire i contenuti del sito',
+                'login_logo_source' => 'sticky',
+                'login_logo_custom' => '',
+                'login_background' => '',
+                'login_overlay_color' => '#1f4d2e',
+                'login_overlay_opacity' => 60,
                 'login_accent' => '#2e7d4f',
             )
         );
@@ -580,7 +696,20 @@ JS;
 
     protected function get_login_logo_url() {
         $settings = $this->get_settings();
-        foreach (array('logo_sticky', 'logo_default') as $key) {
+        $source = (string) $settings['login_logo_source'];
+
+        if ($source === 'none') {
+            return '';
+        }
+
+        $order = array(
+            'sticky' => array('logo_sticky', 'logo_default'),
+            'default' => array('logo_default', 'logo_sticky'),
+            'custom' => array('login_logo_custom', 'logo_sticky', 'logo_default'),
+        );
+        $keys = isset($order[$source]) ? $order[$source] : $order['sticky'];
+
+        foreach ($keys as $key) {
             if (!empty($settings[$key])) {
                 return esc_url_raw($settings[$key]);
             }
@@ -597,6 +726,23 @@ JS;
         return '';
     }
 
+    protected function hex_to_rgba($hex, $alpha) {
+        $hex = ltrim((string) sanitize_hex_color($hex), '#');
+        if (strlen($hex) === 3) {
+            $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+        }
+        if (strlen($hex) !== 6) {
+            $hex = '1f4d2e';
+        }
+        return sprintf(
+            'rgba(%d,%d,%d,%s)',
+            hexdec(substr($hex, 0, 2)),
+            hexdec(substr($hex, 2, 2)),
+            hexdec(substr($hex, 4, 2)),
+            rtrim(rtrim(number_format(max(0, min(1, (float) $alpha)), 2, '.', ''), '0'), '.')
+        );
+    }
+
     public function filter_login_header_url($url) {
         return $this->login_is_custom() ? home_url('/') : $url;
     }
@@ -610,12 +756,19 @@ JS;
             return $message;
         }
 
-        $name = get_bloginfo('name');
-        if ($name === '') {
-            return $message;
+        $settings = $this->get_settings();
+        $title = trim((string) $settings['login_title']);
+        $subtitle = trim((string) $settings['login_subtitle']);
+
+        $html = '';
+        if ($title !== '') {
+            $html .= '<p class="rrs-login-title">' . esc_html($title) . '</p>';
+        }
+        if ($subtitle !== '') {
+            $html .= '<p class="rrs-login-subtitle">' . esc_html($subtitle) . '</p>';
         }
 
-        return '<p class="rrs-login-site-name">' . esc_html($name) . '</p>' . $message;
+        return $html !== '' ? '<div class="rrs-login-heading">' . $html . '</div>' . $message : $message;
     }
 
     public function print_login_styles() {
@@ -628,33 +781,72 @@ JS;
         if (!$accent) {
             $accent = '#2e7d4f';
         }
+        $overlay_hex = sanitize_hex_color($settings['login_overlay_color']);
+        if (!$overlay_hex) {
+            $overlay_hex = '#1f4d2e';
+        }
+        $opacity = max(0, min(95, (int) $settings['login_overlay_opacity'])) / 100;
+        $overlay = $this->hex_to_rgba($overlay_hex, $opacity);
+        $overlay_strong = $this->hex_to_rgba($overlay_hex, min(1, $opacity + 0.2));
+        $background = esc_url_raw((string) $settings['login_background']);
         $logo = $this->get_login_logo_url();
 
+        $body_bg = $background !== ''
+            ? 'background:#1d2b22 url("' . esc_url($background) . '") center/cover no-repeat fixed;'
+            : 'background:linear-gradient(160deg,' . $this->hex_to_rgba($overlay_hex, 1) . ' 0%,#0f1f15 100%);';
+
         $logo_css = $logo !== ''
-            ? '.login h1 a{background-image:url("' . esc_url($logo) . '");background-size:contain;background-position:center;background-repeat:no-repeat;width:100%;max-width:260px;height:96px;margin:0 auto 8px;}'
+            ? '.login h1 a{background-image:url("' . esc_url($logo) . '");background-size:contain;background-position:center;background-repeat:no-repeat;width:100%;max-width:240px;height:88px;margin:0 auto 12px;}'
             : '.login h1{display:none;}';
 
         $css = ':root{--rrs-accent:' . $accent . ';}'
-            . 'body.login{background:#f3f5f2;background-image:radial-gradient(circle at 20% 0%,rgba(0,0,0,.03),transparent 60%);color:#1d2327;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}'
-            . '.login #login{width:360px;max-width:calc(100% - 32px);padding:6vh 0 24px;}'
+            // Page + overlay.
+            . 'html,body.login{min-height:100%;}'
+            . 'body.login{' . $body_bg . 'display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 16px;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}'
+            . 'body.login::before{content:"";position:fixed;inset:0;background:linear-gradient(180deg,' . $overlay . ' 0%,' . $overlay_strong . ' 100%);z-index:0;pointer-events:none;}'
+            . 'body.login > *{position:relative;z-index:1;}'
+            // Card.
+            . '.login #login{width:380px;max-width:100%;padding:36px 32px 24px;margin:0;background:rgba(255,255,255,.97);border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.35),0 2px 8px rgba(0,0,0,.15);box-sizing:border-box;}'
             . $logo_css
-            . '.login .rrs-login-site-name{text-align:center;font-size:20px;font-weight:600;line-height:1.3;margin:0 0 20px;color:#1d2327;}'
-            . '.login form{border:0;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.08),0 1px 3px rgba(0,0,0,.06);padding:28px 28px 32px;margin-top:0;}'
-            . '.login label{font-weight:500;}'
-            . '.login form .input,.login input[type=text],.login input[type=password]{border-radius:8px;border:1px solid #c9cfc7;padding:6px 12px;font-size:16px;box-shadow:none;}'
-            . '.login form .input:focus,.login input[type=text]:focus,.login input[type=password]:focus{border-color:var(--rrs-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--rrs-accent) 25%,transparent);outline:0;}'
+            . '.login .rrs-login-heading{text-align:center;margin:0 0 24px;}'
+            . '.login .rrs-login-title{font-size:20px;font-weight:650;line-height:1.3;margin:0;color:#1d2327;letter-spacing:.01em;}'
+            . '.login .rrs-login-subtitle{font-size:14px;line-height:1.4;margin:4px 0 0;color:#646970;}'
+            . '.login form{background:transparent;border:0;box-shadow:none;padding:0;margin:0;overflow:visible;}'
+            . '.login label{font-weight:500;color:#2c3338;}'
+            . '.login form .input,.login input[type=text],.login input[type=password],.login input[type=email]{border-radius:10px;border:1px solid #cfd6cc;background:#fbfcfa;padding:8px 12px;font-size:16px;box-shadow:none;min-height:44px;}'
+            . '.login form .input:focus,.login input[type=text]:focus,.login input[type=password]:focus,.login input[type=email]:focus{border-color:var(--rrs-accent);background:#fff;box-shadow:0 0 0 3px ' . $this->hex_to_rgba($accent, 0.2) . ';outline:0;}'
+            . '.login .button.wp-hide-pw{min-height:44px;}'
             . '.login .button.wp-hide-pw .dashicons{color:var(--rrs-accent);}'
-            . '.login .button-primary{background:var(--rrs-accent);border-color:var(--rrs-accent);border-radius:8px;box-shadow:none;text-shadow:none;padding:4px 20px;font-weight:600;}'
-            . '.login .button-primary:hover,.login .button-primary:focus{background:color-mix(in srgb,var(--rrs-accent) 85%,#000);border-color:color-mix(in srgb,var(--rrs-accent) 85%,#000);}'
-            . '.login .button-primary:focus{box-shadow:0 0 0 2px #fff,0 0 0 4px var(--rrs-accent);}'
+            . '.login .forgetmenot{float:none;margin-top:6px;}'
             . '.login input[type=checkbox]:focus{border-color:var(--rrs-accent);box-shadow:0 0 0 1px var(--rrs-accent);}'
-            . '.login #nav,.login #backtoblog{text-align:center;padding:0;}'
-            . '.login #nav a,.login #backtoblog a,.login .privacy-policy-link{color:#50575e;}'
-            . '.login #nav a:hover,.login #backtoblog a:hover,.login .privacy-policy-link:hover{color:var(--rrs-accent);}'
-            . '.login .message,.login .notice,.login .success{border-radius:8px;border-left-color:var(--rrs-accent);box-shadow:0 1px 3px rgba(0,0,0,.06);}'
-            . '.login .language-switcher{opacity:.85;}';
+            . '.login .submit{margin-top:16px;}'
+            . '.login .button-primary,.wp-core-ui.login .button-primary{float:none;width:100%;min-height:46px;margin-top:12px;background:var(--rrs-accent);border-color:var(--rrs-accent);border-radius:10px;box-shadow:none;text-shadow:none;font-size:15px;font-weight:600;color:#fff;}'
+            . '.login .button-primary:hover,.wp-core-ui.login .button-primary:hover{filter:brightness(.9);background:var(--rrs-accent);border-color:var(--rrs-accent);color:#fff;}'
+            . '.login .button-primary:focus,.wp-core-ui.login .button-primary:focus{box-shadow:0 0 0 2px #fff,0 0 0 4px var(--rrs-accent);background:var(--rrs-accent);color:#fff;}'
+            // Messages.
+            . '.login .message,.login .notice,.login .success,.login #login_error{border-radius:10px;border-left-color:var(--rrs-accent);box-shadow:none;background:#f3f6f2;margin:0 0 20px;}'
+            . '.login #login_error{border-left-color:#d63638;background:#fcf0f1;}'
+            // Links inside the card.
+            . '.login #nav,.login #backtoblog{text-align:center;padding:0;margin:16px 0 0;}'
+            . '.login #backtoblog{margin-top:8px;}'
+            . '.login #nav a,.login #backtoblog a{color:#50575e;text-decoration:none;}'
+            . '.login #nav a:hover,.login #backtoblog a:hover{color:var(--rrs-accent);text-decoration:underline;}'
+            // Outside the card, on the overlay.
+            . '.login .privacy-policy-page-link{margin:16px 0 0;}'
+            . '.login .privacy-policy-page-link a{color:#fff;opacity:.85;}'
+            . '.login .language-switcher{margin-top:20px;color:#fff;}'
+            . '.login .language-switcher label,.login .language-switcher .dashicons{color:#fff;}'
+            . '.login .language-switcher select{border-radius:8px;}'
+            . '.login .language-switcher .button{border-radius:8px;background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.6);color:#fff;}'
+            . '.login .language-switcher .button:hover{background:rgba(255,255,255,.25);color:#fff;}'
+            . '@media (max-width:480px){body.login{padding:16px;justify-content:flex-start;}.login #login{padding:28px 20px 20px;margin-top:4vh;}body.login{background-attachment:scroll;}}';
 
-        echo '<style id="rrs-login-style">' . $css . '</style>';
+        // Added to the core "login" stylesheet so it is printed after it and wins.
+        if (wp_style_is('login', 'enqueued') || wp_style_is('login', 'registered')) {
+            wp_add_inline_style('login', $css);
+        } else {
+            echo '<style id="rrs-login-style">' . $css . '</style>';
+        }
     }
 
     protected function is_supported_preview_post_type($post) {
@@ -719,9 +911,11 @@ JS;
     }
 }
 
-function reti_riserve_setting_bootstrap() {
-    $plugin = new RetiRiserveSetting();
-    $plugin->init();
+if (!function_exists('reti_riserve_setting_bootstrap')) {
+    function reti_riserve_setting_bootstrap() {
+        $plugin = new RetiRiserveSetting();
+        $plugin->init();
+    }
 }
 
 reti_riserve_setting_bootstrap();

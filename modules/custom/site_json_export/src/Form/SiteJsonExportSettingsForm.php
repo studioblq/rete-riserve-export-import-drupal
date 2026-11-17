@@ -99,9 +99,20 @@ class SiteJsonExportSettingsForm extends ConfigFormBase {
       $node_type_options[$node_type->id()] = $node_type->label();
     }
 
-    $language_options = ['all' => $this->t('All available translations')];
+    $language_options = [];
     foreach ($this->languageManager->getLanguages() as $language) {
-      $language_options[$language->getId()] = $language->getName();
+      $language_options[$language->getId()] = $language->getName() . ' (' . $language->getId() . ')';
+    }
+
+    $saved_language = strtolower(trim((string) ($config->get('language') ?: 'all')));
+    $saved_languages = [];
+    if ($saved_language !== 'all') {
+      foreach (explode(',', $saved_language) as $langcode) {
+        $langcode = trim($langcode);
+        if ($langcode !== '' && isset($language_options[$langcode])) {
+          $saved_languages[] = $langcode;
+        }
+      }
     }
 
     $form['endpoint_path'] = [
@@ -113,12 +124,11 @@ class SiteJsonExportSettingsForm extends ConfigFormBase {
     ];
 
     $form['language'] = [
-      '#type' => 'select',
-      '#title' => $this->t('Export language'),
-      '#description' => $this->t('Choose one language for export, or include all translations.'),
+      '#type' => 'checkboxes',
+      '#title' => $this->t('Languages to export'),
+      '#description' => $this->t('One row per published translation, original language first. Leave all unchecked to export every language. Override per request with ?lang=it, ?lang=it,en,de or ?lang=all.'),
       '#options' => $language_options,
-      '#default_value' => $config->get('language') ?: 'all',
-      '#required' => TRUE,
+      '#default_value' => $saved_languages,
     ];
 
     $form['node_types'] = [
@@ -280,13 +290,21 @@ class SiteJsonExportSettingsForm extends ConfigFormBase {
 
     $this->configFactory->getEditable('site_json_export.settings')
       ->set('endpoint_path', trim((string) $form_state->getValue('endpoint_path')))
-      ->set('language', (string) $form_state->getValue('language'))
+      ->set('language', $this->buildLanguageSetting((array) $form_state->getValue('language')))
       ->set('node_types', $selected_node_types)
       ->set('fields', $clean_fields)
       ->set('entity_reference_modes', $clean_entity_reference_modes)
       ->save();
 
     $this->routeBuilder->rebuild();
+  }
+
+  /**
+   * Converts the language checkboxes to the stored string ("all" or "it,en").
+   */
+  protected function buildLanguageSetting(array $values) {
+    $selected = $this->sanitizeCheckboxValues($values);
+    return $selected === [] ? 'all' : implode(',', $selected);
   }
 
   /**

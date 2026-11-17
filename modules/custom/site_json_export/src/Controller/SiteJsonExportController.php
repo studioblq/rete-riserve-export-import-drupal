@@ -59,6 +59,27 @@ class SiteJsonExportController extends ControllerBase {
 
     $node_types = (array) ($config->get('node_types') ?: []);
     $language = (string) ($config->get('language') ?: 'all');
+
+    // Optional override from the URL: ?lang=it, ?lang=it,en,de or ?lang=all.
+    $requested_language = trim((string) $request->query->get('lang', ''));
+    $strict = FALSE;
+    if ($requested_language !== '') {
+      $language = $requested_language;
+      $strict = TRUE;
+    }
+    $requested_langcodes = $this->resolveLangcodes($language, $strict);
+    if ($requested_langcodes === NULL) {
+      return new JsonResponse([
+        'meta' => [
+          'count' => 0,
+          'path' => $request->getPathInfo(),
+          'language' => $language,
+          'message' => 'Unknown language code. Available: all, ' . implode(', ', array_keys($this->languageManager()->getLanguages())),
+        ],
+        'data' => [],
+      ], 400);
+    }
+
     $fields_by_bundle = (array) ($config->get('fields') ?: []);
     $entity_reference_modes = (array) ($config->get('entity_reference_modes') ?: []);
 
@@ -86,45 +107,10 @@ class SiteJsonExportController extends ControllerBase {
     $nodes = $storage->loadMultiple($node_ids);
 
     $data = [];
-    foreach ($nodes as $node) {
-      if ($language !== 'all') {
-        if (!$node->hasTranslation($language)) {
-          continue;
-        }
-        $node = $node->getTranslation($language);
+    foreach ($nodes as $source_node) {
+      foreach ($this->getExportTranslations($source_node, $requested_langcodes) as $node) {
+        $data[] = $this->buildRow($node, $fields_by_bundle, $entity_reference_modes);
       }
-
-      $bundle = $node->bundle();
-      $fields = array_values(array_unique(array_filter((array) ($fields_by_bundle[$bundle] ?? []))));
-
-      if ($fields === []) {
-        $fields = ['title'];
-      }
-
-      $row = [
-        'nid' => (int) $node->id(),
-        'uuid' => $node->uuid(),
-        'type' => $bundle,
-        'langcode' => $node->language()->getId(),
-      ];
-
-      foreach ($fields as $field_name) {
-        if (!$node->hasField($field_name)) {
-          continue;
-        }
-
-        $mode = 'id';
-        if (isset($entity_reference_modes[$bundle]) && is_array($entity_reference_modes[$bundle]) && isset($entity_reference_modes[$bundle][$field_name])) {
-          $candidate_mode = (string) $entity_reference_modes[$bundle][$field_name];
-          if (in_array($candidate_mode, ['id', 'label', 'id_label'], TRUE)) {
-            $mode = $candidate_mode;
-          }
-        }
-
-        $row[$field_name] = $this->normalizeField($node->get($field_name), $mode);
-      }
-
-      $data[] = $row;
     }
 
     return new JsonResponse([
@@ -132,10 +118,132 @@ class SiteJsonExportController extends ControllerBase {
         'count' => count($data),
         'path' => $request->getPathInfo(),
         'language' => $language,
+        'languages' => $requested_langcodes === [] ? 'all' : $requested_langcodes,
         'content_types' => $node_types,
       ],
       'data' => $data,
     ]);
+  }
+
+  /**
+   * Converts the language option into a list of langcodes.
+   *
+   * @param string $language
+   *   "all", one langcode or a comma separated list.
+   * @param bool $strict
+   *   When TRUE an unknown langcode makes the whole value invalid.
+   *
+   * @return string[]|null
+   *   Empty array for "all", list of langcodes, or NULL if a code is unknown.
+   */
+  protected function resolveLangcodes($language, $strict = TRUE) {
+    $language = strtolower(trim((string) $language));
+    if ($language === '' || $language === 'all') {
+      return [];
+    }
+
+    $available = array_keys($this->languageManager()->getLanguages());
+    $langcodes = [];
+    foreach (explode(',', $language) as $langcode) {
+      $langcode = trim($langcode);
+      if ($langcode === '') {
+        continue;
+      }
+      if (!in_array($langcode, $available, TRUE)) {
+        if ($strict) {
+          return NULL;
+        }
+        // Stale config value (language removed): ignore it.
+        continue;
+      }
+      $langcodes[] = $langcode;
+    }
+
+    return array_values(array_unique($langcodes));
+  }
+
+  /**
+   * Returns the published translations of a node to export.
+   *
+   * The original (default) translation always comes first, so the importer
+   * creates the source post before its translations.
+   *
+   * @param \Drupal\node\NodeInterface $node
+   *   The loaded node.
+   * @param string[] $langcodes
+   *   Requested langcodes; empty array means all translations.
+   *
+   * @return \Drupal\node\NodeInterface[]
+   *   Translations to export.
+   */
+  protected function getExportTranslations($node, array $langcodes) {
+    $original = $node->getUntranslated();
+    $original_langcode = $original->language()->getId();
+
+    $candidates = array_keys($node->getTranslationLanguages());
+    usort($candidates, function ($a, $b) use ($original_langcode) {
+      if ($a === $original_langcode) {
+        return -1;
+      }
+      if ($b === $original_langcode) {
+        return 1;
+      }
+      return strcmp($a, $b);
+    });
+
+    $translations = [];
+    foreach ($candidates as $langcode) {
+      if ($langcodes !== [] && !in_array($langcode, $langcodes, TRUE)) {
+        continue;
+      }
+      $translation = $node->getTranslation($langcode);
+      if (method_exists($translation, 'isPublished') && !$translation->isPublished()) {
+        continue;
+      }
+      $translations[] = $translation;
+    }
+
+    return $translations;
+  }
+
+  /**
+   * Builds one export row for a node translation.
+   */
+  protected function buildRow($node, array $fields_by_bundle, array $entity_reference_modes) {
+    $bundle = $node->bundle();
+    $fields = array_values(array_unique(array_filter((array) ($fields_by_bundle[$bundle] ?? []))));
+
+    if ($fields === []) {
+      $fields = ['title'];
+    }
+
+    $row = [
+      'nid' => (int) $node->id(),
+      'uuid' => $node->uuid(),
+      'type' => $bundle,
+      'langcode' => $node->language()->getId(),
+      'default_langcode' => $node->isDefaultTranslation(),
+      'original_langcode' => $node->getUntranslated()->language()->getId(),
+      'translation_langcodes' => array_keys($node->getTranslationLanguages()),
+    ];
+
+    foreach ($fields as $field_name) {
+      if (!$node->hasField($field_name)) {
+        continue;
+      }
+
+      $mode = 'id';
+      if (isset($entity_reference_modes[$bundle]) && is_array($entity_reference_modes[$bundle]) && isset($entity_reference_modes[$bundle][$field_name])) {
+        $candidate_mode = (string) $entity_reference_modes[$bundle][$field_name];
+        if (in_array($candidate_mode, ['id', 'label', 'id_label'], TRUE)) {
+          $mode = $candidate_mode;
+        }
+      }
+
+      $row[$field_name] = $this->normalizeField($node->get($field_name), $mode);
+    }
+
+    return $row;
   }
 
   /**

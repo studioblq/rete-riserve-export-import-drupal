@@ -12,7 +12,7 @@ site_json_export.settings:
         type: string
     language:
       type: string
-      label: 'Export language'
+      label: 'Export languages (all or comma separated langcodes)'
     fields:
       type: mapping
       label: 'Selected fields by node type'

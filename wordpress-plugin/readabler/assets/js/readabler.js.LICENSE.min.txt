@@ -1,0 +1,11 @@
+/**
+ * Readabler
+ * Web accessibility for your site.
+ * Exclusively on https://1.envato.market/readabler-js
+ *
+ * @encoding        UTF-8
+ * @version         1.7
+ * @copyright       (C) 2018-2024 Merkulove (https://merkulov.design/). All rights reserved.
+ * @license         Envato License https://1.envato.market/KYbje
+ * @support         help@merkulov.design
+ **/
