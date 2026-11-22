@@ -18,7 +18,7 @@ if (!defined('ABSPATH')) {
 require_once __DIR__ . '/lib/class-area051-github-updater.php';
 new Area051_GitHub_Updater_V1(__FILE__, 'site-json-acf-importer');
 
-define('SJAI_VERSION', '1.6.1');
+define('SJAI_VERSION', '1.6.2');
 define('SJAI_PLUGIN_FILE', __FILE__);
 define('SJAI_PLUGIN_DIR', plugin_dir_path(__FILE__));
 
