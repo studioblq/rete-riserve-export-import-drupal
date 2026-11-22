@@ -4303,7 +4303,7 @@ JS;
                 'max_items' => $max_items,
             );
 
-            if (!set_transient('sjai_import_state_' . get_current_user_id(), $state, HOUR_IN_SECONDS)) {
+            if (!set_transient('sjai_import_state_' . get_current_user_id(), $state, DAY_IN_SECONDS)) {
                 ob_end_clean();
                 wp_send_json_error('Errore salvataggio stato.');
             }
@@ -4552,10 +4552,10 @@ JS;
                 $stored = array();
             }
             $stored = array_merge($stored, $imported_post_ids);
-            set_transient('sjai_imported_post_ids_' . $user_id, $stored, HOUR_IN_SECONDS);
+            set_transient('sjai_imported_post_ids_' . $user_id, $stored, DAY_IN_SECONDS);
         }
 
-        set_transient('sjai_import_state_' . $user_id, $state, HOUR_IN_SECONDS);
+        set_transient('sjai_import_state_' . $user_id, $state, DAY_IN_SECONDS);
 
         $done = (
             $processed_overall >= $state['total'] ||
