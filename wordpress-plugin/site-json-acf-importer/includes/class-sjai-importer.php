@@ -39,6 +39,10 @@ class SJAI_Importer {
         }
     }
 
+    /** @var float Seconds spent downloading / processing images for the current record (debug log). */
+    protected $timing_download = 0.0;
+    protected $timing_sideload = 0.0;
+
     protected function log_import_debug($message) {
         if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
             error_log('[SJAI] ' . $message);
@@ -3523,7 +3527,9 @@ JS;
             require_once ABSPATH . 'wp-admin/includes/image.php';
         }
 
+        $download_started_at = microtime(true);
         $temp_file = download_url($normalized_url, 10);
+        $this->timing_download += microtime(true) - $download_started_at;
         if (is_wp_error($temp_file)) {
             $this->request_image_stats['failed']++;
             $this->log_import_debug('Sideload download_url failed post_id=' . (int) $post_id . ' url=' . $normalized_url . ' error=' . $temp_file->get_error_message());
@@ -3540,7 +3546,9 @@ JS;
             'tmp_name' => $temp_file,
         );
 
+        $sideload_started_at = microtime(true);
         $attachment_id = media_handle_sideload($file_array, (int) $post_id);
+        $this->timing_sideload += microtime(true) - $sideload_started_at;
 
         if (is_wp_error($attachment_id)) {
             $this->request_image_stats['failed']++;
@@ -4440,6 +4448,7 @@ JS;
         $acf_path_map = is_array($settings['acf_map_path_ui']) ? $settings['acf_map_path_ui'] : array();
         $field_map_v2 = is_array($settings['field_map_v2']) ? $settings['field_map_v2'] : array();
 
+        wp_defer_term_counting(true);
         $processed_in_batch = 0;
         $processed_overall = isset($state['processed']) ? (int) $state['processed'] : 0;
         $cursor = isset($state['cursor']) ? max(0, (int) $state['cursor']) : 0;
@@ -4489,7 +4498,11 @@ JS;
                 continue;
             }
 
+            $record_started_at = microtime(true);
             $result = $this->import_single_item($item, $settings, $type_map, $acf_map, $acf_path_map, $field_map_v2, true);
+            $this->log_import_debug(sprintf('Record #%d nid=%s lang=%s status=%s post_id=%d time=%.2fs (immagini: download %.2fs, elaborazione %.2fs)', $index + 1, isset($item['nid']) ? (string) $item['nid'] : '-', $this->get_item_langcode($item), isset($result['status']) ? (string) $result['status'] : '-', isset($result['post_id']) ? (int) $result['post_id'] : 0, microtime(true) - $record_started_at, $this->timing_download, $this->timing_sideload));
+            $this->timing_download = 0.0;
+            $this->timing_sideload = 0.0;
             $state['translations'] = $this->accumulate_translation_stats(
                 isset($state['translations']) && is_array($state['translations']) ? $state['translations'] : $this->empty_translation_stats(),
                 $result
@@ -4524,6 +4537,7 @@ JS;
             wp_send_json_error('Errore durante import batch: ' . $e->getMessage());
         }
 
+        wp_defer_term_counting(false);
         $state['processed'] = $processed_overall;
         $state['cursor'] = $cursor;
         $batch_image_stats = $this->get_request_image_stats();
