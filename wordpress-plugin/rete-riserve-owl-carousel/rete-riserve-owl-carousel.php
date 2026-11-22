@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Rete di Riserve Owl Carousel
  * Description: Gestione template item e shortcode per creare carousel Owl con campi WordPress/ACF.
- * Version: 1.0.1
+ * Version: 1.1.0
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -92,6 +92,14 @@ class ReteRiserveOwlCarousel {
 
         echo '<h3 style="margin-top:20px;">' . esc_html__('Griglia paginata', 'rete-riserve-owl-carousel') . '</h3>';
         echo '<p><code>[rr_post_grid template="prova-percorsi" post_type="post" posts_per_page="9" columns_desktop="3" columns_tablet="2" columns_mobile="1" pagination="1"]</code></p>';
+
+        echo '<h3 style="margin-top:20px;">' . esc_html__('Nessun contenuto', 'rete-riserve-owl-carousel') . '</h3>';
+        echo '<p>' . esc_html__('Se la ricerca non trova contenuti (es. nessun evento futuro) viene mostrato un riquadro con l\'immagine di default delle news (plugin Reti Riserve Setting) e un messaggio.', 'rete-riserve-owl-carousel') . '</p>';
+        echo '<ul style="list-style:disc;padding-left:20px;">';
+        echo '<li><code>empty_text="Nessun evento in programma"</code> ' . esc_html__('cambia il messaggio (predefinito: "Al momento non sono presenti contenuti.").', 'rete-riserve-owl-carousel') . '</li>';
+        echo '<li><code>empty_image="https://.../foto.jpg"</code> ' . esc_html__('usa un\'altra immagine; empty_image="none" mostra solo il testo.', 'rete-riserve-owl-carousel') . '</li>';
+        echo '<li><code>empty="0"</code> ' . esc_html__('non mostra niente (comportamento precedente).', 'rete-riserve-owl-carousel') . '</li>';
+        echo '</ul>';
 
         echo '<h3 style="margin-top:20px;">' . esc_html__('Filtri utili', 'rete-riserve-owl-carousel') . '</h3>';
         echo '<ul style="list-style:disc;padding-left:20px;">';
@@ -693,6 +701,62 @@ JS;
     justify-self: stretch;
     align-self: stretch;
 }
+
+/* Empty state: no results for the query. */
+.rr-carousel-empty {
+    position: relative;
+    width: 100%;
+    box-sizing: border-box;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #f3f5f2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    min-height: 160px;
+    padding: 24px;
+}
+.rr-carousel-empty--has-image {
+    padding: 0;
+    min-height: 0;
+    aspect-ratio: 16 / 9;
+}
+.rr-carousel-empty__media,
+.rr-carousel-empty__media img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+}
+.rr-carousel-empty__media img {
+    object-fit: cover;
+    display: block;
+    margin: 0;
+}
+.rr-carousel-empty--has-image .rr-carousel-empty__media::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(0,0,0,.05) 0%, rgba(0,0,0,.55) 100%);
+}
+.rr-carousel-empty__text {
+    position: relative;
+    z-index: 1;
+    margin: 0;
+    padding: 0;
+    font-size: 1.1em;
+    font-weight: 600;
+    line-height: 1.4;
+    color: #3c434a;
+}
+.rr-carousel-empty--has-image .rr-carousel-empty__text {
+    align-self: flex-end;
+    width: 100%;
+    padding: 20px 24px;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0,0,0,.4);
+}
 CSS;
 
         wp_add_inline_style(self::STYLE_HANDLE, $inline_css);
@@ -733,6 +797,9 @@ CSS;
             'dots_position' => 'inside',
             'margin' => '16',
             'class' => '',
+            'empty' => '1',
+            'empty_text' => '',
+            'empty_image' => '',
             'debug' => '0',
         ), $atts, 'rr_owl_carousel');
 
@@ -957,10 +1024,10 @@ CSS;
         }
 
         if (empty($query_posts)) {
-            if ($debug_enabled) {
-                return '<!-- rr_owl_carousel debug: ' . esc_html((string) wp_json_encode($debug_payload)) . ' -->';
-            }
-            return '<!-- rr_owl_carousel: nessun risultato -->';
+            $debug_html = $debug_enabled
+                ? '<!-- rr_owl_carousel debug: ' . esc_html((string) wp_json_encode($debug_payload)) . ' -->'
+                : '<!-- rr_owl_carousel: nessun risultato -->';
+            return $this->render_empty_state($atts) . $debug_html;
         }
 
         if ($is_grid_layout) {
@@ -1518,6 +1585,57 @@ CSS;
             default:
                 return $left === $right;
         }
+    }
+
+    /**
+     * Placeholder shown when the query has no results (e.g. no upcoming events).
+     *
+     * Attributes: empty="0" keeps the old behaviour (nothing), empty_text sets
+     * the message, empty_image an image URL ("none" = no image). Without
+     * empty_image the default news image of the "Reti Riserve Setting" plugin
+     * is used, when configured.
+     */
+    protected function render_empty_state($atts) {
+        if ((string) $atts['empty'] === '0') {
+            return '';
+        }
+
+        $text = trim((string) $atts['empty_text']);
+        if ($text === '') {
+            $text = __('Al momento non sono presenti contenuti.', 'rete-riserve-owl-carousel');
+        }
+
+        $image = trim((string) $atts['empty_image']);
+        if ($image === '') {
+            $setting = get_option('reti_riserve_setting_options', array());
+            if (is_array($setting) && !empty($setting['preview_default_image'])) {
+                $image = (string) $setting['preview_default_image'];
+            }
+        } elseif (strtolower($image) === 'none') {
+            $image = '';
+        }
+
+        $this->enqueue_assets();
+
+        $classes = array('rr-carousel-empty');
+        if ($image !== '') {
+            $classes[] = 'rr-carousel-empty--has-image';
+        }
+        foreach (preg_split('/\s+/', (string) $atts['class']) as $extra_class) {
+            $extra_class = sanitize_html_class($extra_class);
+            if ($extra_class !== '') {
+                $classes[] = $extra_class;
+            }
+        }
+
+        $html = '<div class="' . esc_attr(implode(' ', $classes)) . '" role="status">';
+        if ($image !== '') {
+            $html .= '<div class="rr-carousel-empty__media"><img src="' . esc_url($image) . '" alt="" loading="lazy" decoding="async"></div>';
+        }
+        $html .= '<p class="rr-carousel-empty__text">' . esc_html($text) . '</p>';
+        $html .= '</div>';
+
+        return $html;
     }
 
     protected function render_item_template($template_html, $post_id) {
