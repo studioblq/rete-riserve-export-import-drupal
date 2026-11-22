@@ -303,7 +303,7 @@ class SiteJsonExportController extends ControllerBase {
           $file = $this->entityTypeManager->getStorage('file')->load($item->target_id);
           if ($file instanceof FileInterface) {
             $entry['uri'] = $file->getFileUri();
-            $entry['url'] = file_create_url($file->getFileUri());
+            $entry['url'] = \Drupal::hasService('file_url_generator') ? \Drupal::service('file_url_generator')->generateAbsoluteString($file->getFileUri()) : file_create_url($file->getFileUri());
             $entry['filename'] = $file->getFilename();
           }
         }
