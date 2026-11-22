@@ -2397,7 +2397,7 @@ class SJAI_Importer {
                 $acf_field = $target;
             }
 
-            $normalized = $this->normalize_for_acf($value, $import_images, $post_id);
+            $normalized = $this->format_acf_date_value($acf_field, $this->normalize_for_acf($value, $import_images, $post_id), $value);
             if (function_exists('update_field')) {
                 update_field($acf_field, $normalized, $post_id);
             } else {
@@ -3183,7 +3183,7 @@ JS;
 
             // ACF / META TARGETS
             $acf_field = strpos($wp_target, 'acf:') === 0 ? substr($wp_target, 4) : $wp_target;
-            $normalized = $this->normalize_for_acf($value, $import_images, $post_id);
+            $normalized = $this->format_acf_date_value($acf_field, $this->normalize_for_acf($value, $import_images, $post_id), $value);
             if (function_exists('update_field')) {
                 update_field($acf_field, $normalized, $post_id);
             } else {
@@ -3196,6 +3196,69 @@ JS;
         }
 
         return true;
+    }
+
+    /**
+     * Converts Drupal dates to the storage format of ACF date fields.
+     *
+     * ACF saves date_picker as Ymd, date_time_picker as "Y-m-d H:i:s" and
+     * time_picker as "H:i:s": a raw Drupal timestamp or ISO string would not
+     * be shown in the editor. Timestamps (Drupal datetime range / smart date)
+     * are UTC and are shown in the site timezone; "2026-07-30" style strings
+     * keep their literal date and time.
+     *
+     * @param string $acf_field  ACF field name or key.
+     * @param mixed  $normalized Value already prepared for ACF.
+     * @param mixed  $raw        Original JSON value (scalar or {value: ...}).
+     */
+    protected function format_acf_date_value($acf_field, $normalized, $raw) {
+        if (!function_exists('acf_get_field')) {
+            return $normalized;
+        }
+
+        $field = acf_get_field($acf_field);
+        if (!is_array($field) || empty($field['type'])) {
+            return $normalized;
+        }
+
+        $formats = array(
+            'date_picker' => 'Ymd',
+            'date_time_picker' => 'Y-m-d H:i:s',
+            'time_picker' => 'H:i:s',
+        );
+        if (!isset($formats[$field['type']])) {
+            return $normalized;
+        }
+
+        $text = trim($this->extract_scalar_value($raw));
+        if ($text === '') {
+            return $normalized;
+        }
+
+        $format = $formats[$field['type']];
+
+        if (ctype_digit($text)) {
+            $timestamp = (int) $text;
+            if ($timestamp > 9999999999) {
+                $timestamp = (int) floor($timestamp / 1000);
+            }
+            if ($timestamp <= 0) {
+                return $normalized;
+            }
+            return wp_date($format, $timestamp);
+        }
+
+        try {
+            $date = new DateTime($text, new DateTimeZone('UTC'));
+        } catch (Exception $e) {
+            return $normalized;
+        }
+        // An explicit offset (2026-07-30T10:00:00+02:00) is shown in the site timezone.
+        if (preg_match('/(Z|[+-]\d{2}:?\d{2})$/', $text)) {
+            $date->setTimezone(wp_timezone());
+        }
+
+        return $date->format($format);
     }
 
     protected function normalize_for_acf($value, $import_images, $post_id = 0) {
