@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Rete di Riserve Owl Carousel
  * Description: Gestione template item e shortcode per creare carousel Owl con campi WordPress/ACF.
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -702,60 +702,41 @@ JS;
     align-self: stretch;
 }
 
-/* Empty state: no results for the query. */
+/* Empty state: no results for the query. Image on top, text below. */
 .rr-carousel-empty {
-    position: relative;
     width: 100%;
     box-sizing: border-box;
+    text-align: center;
+}
+.rr-carousel-empty__media {
+    width: 100%;
+    aspect-ratio: 16 / 9;
     border-radius: 12px;
     overflow: hidden;
     background: #f3f5f2;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    min-height: 160px;
-    padding: 24px;
 }
-.rr-carousel-empty--has-image {
-    padding: 0;
-    min-height: 0;
-    aspect-ratio: 16 / 9;
-}
-.rr-carousel-empty__media,
 .rr-carousel-empty__media img {
-    position: absolute;
-    inset: 0;
     width: 100%;
     height: 100%;
-}
-.rr-carousel-empty__media img {
     object-fit: cover;
     display: block;
     margin: 0;
 }
-.rr-carousel-empty--has-image .rr-carousel-empty__media::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(180deg, rgba(0,0,0,.05) 0%, rgba(0,0,0,.55) 100%);
-}
 .rr-carousel-empty__text {
-    position: relative;
-    z-index: 1;
-    margin: 0;
+    margin: 12px 0 0;
     padding: 0;
-    font-size: 1.1em;
+    font-size: 1em;
     font-weight: 600;
     line-height: 1.4;
     color: #3c434a;
 }
-.rr-carousel-empty--has-image .rr-carousel-empty__text {
-    align-self: flex-end;
-    width: 100%;
-    padding: 20px 24px;
-    color: #fff;
-    text-shadow: 0 1px 3px rgba(0,0,0,.4);
+.rr-carousel-empty:not(.rr-carousel-empty--has-image) {
+    background: #f3f5f2;
+    border-radius: 12px;
+    padding: 32px 24px;
+}
+.rr-carousel-empty:not(.rr-carousel-empty--has-image) .rr-carousel-empty__text {
+    margin: 0;
 }
 CSS;
 
