@@ -1,0 +1,2 @@
+# Plugin zips are built locally by tools/build-wp-zips.py: never pushed.
+*.zip
