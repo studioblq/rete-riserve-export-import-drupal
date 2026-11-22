@@ -2617,7 +2617,9 @@ function startAsyncImport(nonce){
                 localStorage.setItem(sessionKey, JSON.stringify(session));
                 processBatch(nonce, resp.data.total);
             } else {
-                showError((resp.data && resp.data.message) || "Errore inizializzazione");
+                var msg = resp.data && (typeof resp.data === "string" ? resp.data : resp.data.message);
+                if(!msg && resp.success) msg = "Nessun record da importare con le impostazioni attuali";
+                showError(msg || "Errore inizializzazione");
             }
         } catch(e) {
             showError("Errore: " + e.message);
@@ -4243,6 +4245,31 @@ JS;
                 if (is_array($item) && $this->item_passes_language_filter($item, $settings)) {
                     $total++;
                 }
+            }
+
+            if ($total === 0) {
+                // Explain why nothing is importable instead of a generic error in the browser.
+                $found_langs = array();
+                foreach ($data as $item) {
+                    if (is_array($item)) {
+                        $found_langs[$this->get_item_langcode($item)] = true;
+                    }
+                }
+                $selected = !empty($settings['import_languages']) && is_array($settings['import_languages']) ? $settings['import_languages'] : array();
+                $reasons = array();
+                if (empty($data)) {
+                    $reasons[] = 'il JSON non contiene record (controlla URL endpoint e tipi di contenuto esportati da Drupal)';
+                } else {
+                    $reasons[] = 'record nel JSON: ' . count($data);
+                    if ($start_record > count($data)) {
+                        $reasons[] = 'il "record iniziale" (' . $start_record . ') supera il numero di record';
+                    }
+                    if (!empty($selected)) {
+                        $reasons[] = 'lingue selezionate: ' . implode(', ', $selected) . ' - lingue presenti nel JSON: ' . implode(', ', array_keys($found_langs));
+                    }
+                }
+                ob_end_clean();
+                wp_send_json_error(array('message' => 'Nessun record da importare con le impostazioni attuali: ' . implode('; ', $reasons) . '.'));
             }
 
             $state = array(
