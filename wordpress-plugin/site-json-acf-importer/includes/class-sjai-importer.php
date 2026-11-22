@@ -2653,7 +2653,7 @@ function processBatch(nonce, total, attempt){
             if(resp.success){
                 updateProgress(resp.data, total);
                 if(!resp.data.done){
-                    setTimeout(function(){ processBatch(nonce, total, 0); }, 500);
+                    setTimeout(function(){ processBatch(nonce, total, 0); }, 100);
                 } else {
                     showResult(resp.data);
                     btn.disabled = false;
@@ -4300,6 +4300,8 @@ JS;
                 wp_send_json_error('Errore salvataggio stato.');
             }
 
+            $this->save_import_data_cache(get_current_user_id(), $settings['endpoint_url'], $data);
+
             ob_end_clean();
             wp_send_json_success(array(
                 'total' => $total,
@@ -4308,6 +4310,68 @@ JS;
         } catch (\Throwable $e) {
             ob_end_clean();
             wp_send_json_error('Eccezione: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Path of the per-user copy of the endpoint JSON used by the async import.
+     *
+     * Stored in uploads/sjai-cache with an unguessable name, a deny-all
+     * .htaccess and an empty index.php.
+     */
+    protected function get_import_data_cache_path($user_id) {
+        $uploads = wp_upload_dir(null, false);
+        if (!empty($uploads['error']) || empty($uploads['basedir'])) {
+            return '';
+        }
+        $dir = trailingslashit($uploads['basedir']) . 'sjai-cache';
+        if (!is_dir($dir)) {
+            if (!wp_mkdir_p($dir)) {
+                return '';
+            }
+            @file_put_contents($dir . '/.htaccess', "Require all denied\nDeny from all\n");
+            @file_put_contents($dir . '/index.php', "<?php\n// Silence is golden.\n");
+        }
+        return $dir . '/import-' . (int) $user_id . '-' . wp_hash('sjai_import_cache_' . (int) $user_id) . '.json';
+    }
+
+    protected function save_import_data_cache($user_id, $endpoint_url, $data) {
+        $path = $this->get_import_data_cache_path($user_id);
+        if ($path === '' || !is_array($data)) {
+            return false;
+        }
+        $json = wp_json_encode(array(
+            'endpoint_url' => (string) $endpoint_url,
+            'saved_at' => time(),
+            'data' => $data,
+        ));
+        return is_string($json) && @file_put_contents($path, $json, LOCK_EX) !== false;
+    }
+
+    /**
+     * @return array|null Cached data[] for this endpoint, or null when missing/stale.
+     */
+    protected function load_import_data_cache($user_id, $endpoint_url) {
+        $path = $this->get_import_data_cache_path($user_id);
+        if ($path === '' || !is_readable($path)) {
+            return null;
+        }
+        $decoded = json_decode((string) @file_get_contents($path), true);
+        if (
+            !is_array($decoded)
+            || !isset($decoded['data']) || !is_array($decoded['data'])
+            || (string) ($decoded['endpoint_url'] ?? '') !== (string) $endpoint_url
+            || (int) ($decoded['saved_at'] ?? 0) < time() - DAY_IN_SECONDS
+        ) {
+            return null;
+        }
+        return $decoded['data'];
+    }
+
+    protected function delete_import_data_cache($user_id) {
+        $path = $this->get_import_data_cache_path($user_id);
+        if ($path !== '' && is_file($path)) {
+            @unlink($path);
         }
     }
 
@@ -4339,13 +4403,17 @@ JS;
                 wp_send_json_error('Impostazioni non trovate nello stato.');
             }
 
-            $payload = @$this->fetch_endpoint_data($settings['endpoint_url']);
-            if (!is_array($payload) || !$payload['ok']) {
-                ob_end_clean();
-                wp_send_json_error('Errore fetch dati: ' . (isset($payload['message']) ? $payload['message'] : 'Sconosciuto'));
+            // The JSON is downloaded once at start: re-fetching it for every batch cost seconds per record.
+            $data = $this->load_import_data_cache($user_id, $settings['endpoint_url']);
+            if ($data === null) {
+                $payload = @$this->fetch_endpoint_data($settings['endpoint_url']);
+                if (!is_array($payload) || !$payload['ok']) {
+                    ob_end_clean();
+                    wp_send_json_error('Errore fetch dati: ' . (isset($payload['message']) ? $payload['message'] : 'Sconosciuto'));
+                }
+                $data = $payload['data'];
+                $this->save_import_data_cache($user_id, $settings['endpoint_url'], $data);
             }
-
-            $data = $payload['data'];
             if (!is_array($data)) {
                 ob_end_clean();
                 wp_send_json_error('Dati non validi.');
@@ -4356,9 +4424,11 @@ JS;
         }
 
         @set_time_limit(0);
-        $batch_size = 1;
+        // Several records per request: a new record starts only while the request is under
+        // $max_request_seconds, so a slow gallery still fits in the browser timeout (60s).
+        $batch_size = 25;
         $request_started_at = microtime(true);
-        $max_request_seconds = 50;
+        $max_request_seconds = 15;
         // One post per batch: allow its whole gallery to download in a single request.
         $this->sideload_deadline_ts = $request_started_at + 45;
         $this->sideload_attempts_in_request = 0;
@@ -4479,6 +4549,10 @@ JS;
             ($end_record > 0 && $cursor >= $end_record) ||
             ($max_items > 0 && $processed_overall >= $max_items)
         );
+
+        if ($done) {
+            $this->delete_import_data_cache($user_id);
+        }
 
         if ($done && !empty($settings['enable_parent_linking'])) {
             $stored_ids = get_transient('sjai_imported_post_ids_' . $user_id);
