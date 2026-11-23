@@ -2662,14 +2662,19 @@ function processBatch(nonce, total, attempt){
             // The server state is saved after each batch, so retrying is safe.
             var snippet = String(xhr.responseText || "").replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
             var label = "Risposta non valida dal server (HTTP " + xhr.status + ")";
-            if(attempt < maxRetries){
-                var wait = 5000 * (attempt + 1);
-                progressText.textContent = label + ", nuovo tentativo " + (attempt + 1) + " di " + maxRetries + " tra " + (wait / 1000) + "s...";
+            // 429/502/503/504/508: the hosting is over its resource limits. It usually recovers
+            // within minutes, so wait longer (30s, 60s ... up to 2 min) and keep trying.
+            var overloaded = [429, 502, 503, 504, 508].indexOf(xhr.status) !== -1;
+            var retriesAllowed = overloaded ? 12 : maxRetries;
+            if(attempt < retriesAllowed){
+                var wait = overloaded ? Math.min(30000 * (attempt + 1), 120000) : 5000 * (attempt + 1);
+                label += overloaded ? " - server sovraccarico, attendo" : "";
+                progressText.textContent = label + ", nuovo tentativo " + (attempt + 1) + " di " + retriesAllowed + " tra " + (wait / 1000) + "s...";
                 setTimeout(function(){ processBatch(nonce, total, attempt + 1); }, wait);
-            } else {
-                showError(label + " dopo " + maxRetries + " tentativi: " + (snippet || "risposta vuota") + ". Ricarica la pagina e clicca Avvia: riparte da dove si e fermato.");
-                btn.disabled = false;
+                return;
             }
+            showError(label + " dopo " + retriesAllowed + " tentativi: " + (snippet || "risposta vuota") + ". Ricarica la pagina e clicca Avvia: riparte da dove si e fermato.");
+            btn.disabled = false;
             return;
         }
         try {
