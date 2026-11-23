@@ -2369,6 +2369,8 @@ class SJAI_Importer {
                     if (!empty($parsed_date['post_date'])) {
                         $post_update['post_date'] = $parsed_date['post_date'];
                         $post_update['post_date_gmt'] = $parsed_date['post_date_gmt'];
+                        // Without edit_date WordPress replaces the date of drafts with the current time.
+                        $post_update['edit_date'] = true;
                         $has_post_update = true;
                     }
                 } elseif ($wp_target === 'featured_image') {
@@ -3187,6 +3189,8 @@ JS;
                     if (!empty($parsed_date['post_date'])) {
                         $post_update['post_date'] = $parsed_date['post_date'];
                         $post_update['post_date_gmt'] = $parsed_date['post_date_gmt'];
+                        // Without edit_date WordPress replaces the date of drafts with the current time.
+                        $post_update['edit_date'] = true;
                         $has_post_update = true;
                     }
                 } elseif ($wp_sub === 'category' || $wp_sub === 'categories') {
