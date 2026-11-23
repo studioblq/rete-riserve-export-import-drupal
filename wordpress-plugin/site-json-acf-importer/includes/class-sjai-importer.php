@@ -130,6 +130,7 @@ class SJAI_Importer {
         $settings['default_post_type'] = isset($_POST['default_post_type']) ? sanitize_key(wp_unslash($_POST['default_post_type'])) : 'post';
         $settings['default_status'] = isset($_POST['default_status']) ? sanitize_key(wp_unslash($_POST['default_status'])) : 'draft';
         $settings['import_images'] = !empty($_POST['import_images']) ? 1 : 0;
+        $settings['skip_thumbnails'] = !empty($_POST['skip_thumbnails']) ? 1 : 0;
         $settings['auth_bearer_token'] = isset($_POST['auth_bearer_token']) ? sanitize_text_field(trim(wp_unslash($_POST['auth_bearer_token']))) : '';
         $settings['request_user_agent'] = isset($_POST['request_user_agent']) ? sanitize_text_field(trim(wp_unslash($_POST['request_user_agent']))) : 'Mozilla/5.0 (compatible; SiteJSONImporter/1.0; +WordPress)';
         $settings['enable_parent_linking'] = !empty($_POST['enable_parent_linking']) ? 1 : 0;
@@ -510,6 +511,7 @@ class SJAI_Importer {
         echo '<th scope="row">' . esc_html__('Importa immagini', 'site-json-acf-importer') . '</th>';
         echo '<td>';
         echo '<label><input type="checkbox" name="import_images" value="1" ' . checked(1, $settings['import_images'], false) . ' /> ' . esc_html__('Scarica immagini remote e salva anche ALT e TITLE negli attachment.', 'site-json-acf-importer') . '</label>';
+        echo '<br><label><input type="checkbox" name="skip_thumbnails" value="1" ' . checked(1, !empty($settings['skip_thumbnails']) ? 1 : 0, false) . ' /> ' . esc_html__('Import veloce: non generare le miniature durante l\'import (rigenerale dopo, ad esempio con il plugin Regenerate Thumbnails).', 'site-json-acf-importer') . '</label>';
         echo '</td>';
         echo '</tr>';
 
@@ -1132,6 +1134,7 @@ class SJAI_Importer {
             'default_post_type' => 'post',
             'default_status' => 'draft',
             'import_images' => 0,
+            'skip_thumbnails' => 0,
             'auth_bearer_token' => '',
             'request_user_agent' => 'Mozilla/5.0 (compatible; SiteJSONImporter/1.0; +WordPress)',
             'enable_parent_linking' => 0,
@@ -2647,8 +2650,8 @@ function processBatch(nonce, total, attempt){
     var xhr = new XMLHttpRequest();
     xhr.open("POST", ajaxUrl);
     xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-    xhr.timeout = 60000;
-    timeout = setTimeout(function(){ xhr.abort(); }, 60000);
+    xhr.timeout = 120000;
+    timeout = setTimeout(function(){ xhr.abort(); }, 120000);
 
     xhr.onload = function(){
         clearTimeout(timeout);
@@ -3563,7 +3566,17 @@ JS;
         );
 
         $sideload_started_at = microtime(true);
+        // Generating every intermediate size (Divi registers many) takes 5-20s per photo on
+        // shared hosting: with skip_thumbnails only the original (and its -scaled copy) is saved.
+        $sjai_settings = $this->get_settings();
+        $skip_thumbnails = !empty($sjai_settings['skip_thumbnails']);
+        if ($skip_thumbnails) {
+            add_filter('intermediate_image_sizes_advanced', '__return_empty_array', 999);
+        }
         $attachment_id = media_handle_sideload($file_array, (int) $post_id);
+        if ($skip_thumbnails) {
+            remove_filter('intermediate_image_sizes_advanced', '__return_empty_array', 999);
+        }
         $this->timing_sideload += microtime(true) - $sideload_started_at;
 
         if (is_wp_error($attachment_id)) {
@@ -4454,7 +4467,7 @@ JS;
         $request_started_at = microtime(true);
         $max_request_seconds = 15;
         // One post per batch: allow its whole gallery to download in a single request.
-        $this->sideload_deadline_ts = $request_started_at + 45;
+        $this->sideload_deadline_ts = $request_started_at + 35;
         $this->sideload_attempts_in_request = 0;
         $this->sideload_max_attempts_in_request = 0;
         $this->disable_sideload_in_request = false;
