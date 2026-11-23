@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Site JSON ACF Importer
  * Description: Importa contenuti JSON (es. export Drupal) in WordPress con supporto ACF Pro.
- * Version: 1.6.6
+ * Version: 1.6.7
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -18,7 +18,7 @@ if (!defined('ABSPATH')) {
 require_once __DIR__ . '/lib/class-area051-github-updater.php';
 new Area051_GitHub_Updater_V1(__FILE__, 'site-json-acf-importer');
 
-define('SJAI_VERSION', '1.6.6');
+define('SJAI_VERSION', '1.6.7');
 define('SJAI_PLUGIN_FILE', __FILE__);
 define('SJAI_PLUGIN_DIR', plugin_dir_path(__FILE__));
 

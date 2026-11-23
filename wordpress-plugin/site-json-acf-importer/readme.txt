@@ -4,7 +4,7 @@ Tags: import, json, acf, drupal
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 1.6.6
+Stable tag: 1.6.7
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -31,6 +31,9 @@ Importa contenuti JSON da endpoint esterno (es. Drupal) e li salva in WordPress,
 - Se abiliti il parent linking, lo Step 1 importa prima tutti i contenuti e poi esegue un secondo giro per valorizzare post_parent.
 
 == Changelog ==
+
+= 1.6.7 =
+* FIX: Import asincrono: se il server risponde con una pagina HTML (timeout o limiti dell hosting, errore PHP) il blocco viene ritentato fino a 5 volte con attese crescenti invece di fermarsi; se fallisce ancora viene mostrato il codice HTTP e il testo della pagina
 
 = 1.6.6 =
 * FIX: un import asincrono interrotto (pagina chiusa, PC spento) si puo riprendere per 24 ore invece di 1

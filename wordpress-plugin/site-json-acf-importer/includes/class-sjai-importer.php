@@ -2640,7 +2640,7 @@ function resumeAsyncImport(nonce, session){
     setTimeout(function(){ processBatch(nonce, session.total); }, 1000);
 }
 
-var maxRetries = 3;
+var maxRetries = 5;
 function processBatch(nonce, total, attempt){
     if(!attempt) attempt = 0;
     var timeout = null;
@@ -2652,8 +2652,24 @@ function processBatch(nonce, total, attempt){
 
     xhr.onload = function(){
         clearTimeout(timeout);
+        var resp = null;
+        try { resp = JSON.parse(xhr.responseText); } catch(parseError) { resp = null; }
+        if(!resp || typeof resp !== "object"){
+            // HTML or empty answer: hosting timeout/limit page (502/503/504/508) or a PHP fatal.
+            // The server state is saved after each batch, so retrying is safe.
+            var snippet = String(xhr.responseText || "").replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+            var label = "Risposta non valida dal server (HTTP " + xhr.status + ")";
+            if(attempt < maxRetries){
+                var wait = 5000 * (attempt + 1);
+                progressText.textContent = label + ", nuovo tentativo " + (attempt + 1) + " di " + maxRetries + " tra " + (wait / 1000) + "s...";
+                setTimeout(function(){ processBatch(nonce, total, attempt + 1); }, wait);
+            } else {
+                showError(label + " dopo " + maxRetries + " tentativi: " + (snippet || "risposta vuota") + ". Ricarica la pagina e clicca Avvia: riparte da dove si e fermato.");
+                btn.disabled = false;
+            }
+            return;
+        }
         try {
-            var resp = JSON.parse(xhr.responseText);
             if(resp.success){
                 updateProgress(resp.data, total);
                 if(!resp.data.done){
