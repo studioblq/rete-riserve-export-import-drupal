@@ -2948,6 +2948,9 @@ JS;
 
         $post_update     = array('ID' => (int) $post_id);
         $has_post_update = false;
+        // Several "post_date" rows are alternatives: the first non-empty one wins,
+        // "created" & co. are used only when all of them are empty.
+        $post_date_mapped = false;
 
         foreach ($field_map_v2[$source_type] as $entry) {
             if (!is_array($entry)) {
@@ -2957,6 +2960,13 @@ JS;
             $wp_target = isset($entry['wp'])  ? trim((string) $entry['wp'])  : '';
             $src_field = isset($entry['src'])  ? sanitize_key($entry['src'])  : '';
             $path      = isset($entry['path']) ? trim((string) $entry['path']) : '';
+
+            if ($wp_target === 'wp:post_date') {
+                $post_date_mapped = true;
+                if (isset($post_update['post_date'])) {
+                    continue;
+                }
+            }
 
             if ($wp_target === '' || $src_field === '' || !array_key_exists($src_field, $item)) {
                 continue;
@@ -3185,7 +3195,7 @@ JS;
                     $post_update['menu_order'] = (int) $this->extract_scalar_value($value);
                     $has_post_update = true;
                 } elseif ($wp_sub === 'post_date') {
-                    $parsed_date = $this->resolve_post_date_with_fallback($value, $item, $post_id);
+                    $parsed_date = $this->normalize_wp_post_date($value);
                     if (!empty($parsed_date['post_date'])) {
                         $post_update['post_date'] = $parsed_date['post_date'];
                         $post_update['post_date_gmt'] = $parsed_date['post_date_gmt'];
@@ -3222,6 +3232,16 @@ JS;
                 update_field($acf_field, $normalized, $post_id);
             } else {
                 update_post_meta($post_id, $acf_field, $normalized);
+            }
+        }
+
+        if ($post_date_mapped && !isset($post_update['post_date'])) {
+            $parsed_date = $this->resolve_post_date_with_fallback('', $item, $post_id);
+            if (!empty($parsed_date['post_date'])) {
+                $post_update['post_date'] = $parsed_date['post_date'];
+                $post_update['post_date_gmt'] = $parsed_date['post_date_gmt'];
+                $post_update['edit_date'] = true;
+                $has_post_update = true;
             }
         }
 
