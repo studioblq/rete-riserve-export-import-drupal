@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Area051 Orphan Media Cleaner
  * Description: Scansiona ed elimina i media orfani (non collegati ad alcun contenuto) in sicurezza.
- * Version: 1.2.3
+ * Version: 1.2.4
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -24,7 +24,7 @@ class Area051_Orphan_Media_Cleaner {
     const TRANSIENT_SCAN = 'area051_orphan_media_scan_result';
     const OPTION_SCAN_RESULT = 'area051_orphan_media_scan_result_persistent';
     const OPTION_UPLOAD_AUDIT_RESULT = 'area051_upload_audit_result_persistent';
-    const UPLOAD_AUDIT_RULE_VERSION = 2;
+    const UPLOAD_AUDIT_RULE_VERSION = 3;
     const TRANSIENT_SCAN_STATE = 'area051_orphan_media_scan_state';
     const TRANSIENT_DELETE_STATE = 'area051_orphan_media_delete_state';
     const TRANSIENT_UPLOAD_AUDIT_STATE = 'area051_upload_audit_state';
@@ -123,6 +123,10 @@ class Area051_Orphan_Media_Cleaner {
         $excluded_count = isset($_GET['excluded']) ? absint($_GET['excluded']) : 0;
         $search_term = isset($_GET['a51_orphan_search']) ? sanitize_text_field(wp_unslash($_GET['a51_orphan_search'])) : '';
         $upload_search_term = isset($_GET['a51_upload_search']) ? sanitize_text_field(wp_unslash($_GET['a51_upload_search'])) : '';
+        $upload_kind = isset($_GET['a51_upload_kind']) ? sanitize_key(wp_unslash($_GET['a51_upload_kind'])) : '';
+        if (!array_key_exists($upload_kind, $this->get_upload_kind_labels())) {
+            $upload_kind = '';
+        }
 
         echo '<div class="wrap">';
         echo '<h1>' . esc_html__('Area051 Orphan Media Cleaner', 'area051-orphan-media-cleaner') . '</h1>';
@@ -522,6 +526,10 @@ class Area051_Orphan_Media_Cleaner {
             $filtered_upload_files = $upload_search_term !== ''
                 ? $this->filter_upload_audit_files($upload_files, $upload_search_term)
                 : $upload_files;
+            $filtered_upload_files = $this->filter_upload_audit_files_by_kind($filtered_upload_files, $upload_audit_result, $upload_kind);
+            $upload_kind_labels = $this->get_upload_kind_labels();
+            $upload_file_kinds = isset($upload_audit_result['file_kinds']) ? $upload_audit_result['file_kinds'] : array();
+            $upload_in_content = isset($upload_audit_result['in_content']) ? $upload_audit_result['in_content'] : array();
 
             echo '<p><strong>' . esc_html__('Ultimo controllo uploads:', 'area051-orphan-media-cleaner') . '</strong> ' . esc_html(wp_date('Y-m-d H:i:s', (int) $upload_audit_result['generated_at'])) . '</p>';
             echo '<p><strong>' . esc_html__('Immagini analizzate:', 'area051-orphan-media-cleaner') . '</strong> ' . esc_html((string) (int) $upload_audit_result['total_files'])
@@ -529,6 +537,19 @@ class Area051_Orphan_Media_Cleaner {
                 . ' | <strong>' . esc_html__('Possibili non referenziati:', 'area051-orphan-media-cleaner') . '</strong> ' . esc_html((string) count($upload_audit_result['unreferenced_files']))
                 . ' | <strong>' . esc_html__('Durata:', 'area051-orphan-media-cleaner') . '</strong> ' . esc_html(number_format_i18n((float) $upload_audit_result['duration_seconds'], 2)) . 's'
                 . '</p>';
+            $kind_counts = array('thumb_stale' => 0, 'thumb_orphan' => 0, 'file' => 0);
+            foreach ($upload_files as $upload_file) {
+                $k = isset($upload_file_kinds[$upload_file]) ? $upload_file_kinds[$upload_file] : 'file';
+                $kind_counts[isset($kind_counts[$k]) ? $k : 'file']++;
+            }
+            echo '<p><strong>' . esc_html__('Miniature di dimensioni non più usate:', 'area051-orphan-media-cleaner') . '</strong> ' . esc_html((string) $kind_counts['thumb_stale'])
+                . ' | <strong>' . esc_html__('Miniature di file non in libreria:', 'area051-orphan-media-cleaner') . '</strong> ' . esc_html((string) $kind_counts['thumb_orphan'])
+                . ' | <strong>' . esc_html__('Altri file non registrati:', 'area051-orphan-media-cleaner') . '</strong> ' . esc_html((string) $kind_counts['file'])
+                . ' | <strong>' . esc_html__('Ancora usati nei contenuti:', 'area051-orphan-media-cleaner') . '</strong> ' . esc_html((string) count($upload_in_content))
+                . '</p>';
+            if (!empty($upload_in_content)) {
+                echo '<p style="max-width:1000px;color:#996800;">' . esc_html__('I file "ancora usati nei contenuti" sono richiamati da un URL in pagine, meta o opzioni (es. un\'immagine inserita a una certa dimensione): eliminarli lascia immagini rotte. "Elimina tutti" li esclude sempre.', 'area051-orphan-media-cleaner') . '</p>';
+            }
 
             echo '<form method="get" action="' . esc_url(admin_url('admin.php')) . '" style="margin:10px 0 12px;max-width:1100px;display:flex;gap:8px;align-items:end;flex-wrap:wrap;">';
             echo '<input type="hidden" name="page" value="' . esc_attr(self::MENU_SLUG) . '">';
@@ -536,22 +557,30 @@ class Area051_Orphan_Media_Cleaner {
             echo '<label for="area051-upload-search" style="display:block;margin:0 0 6px;font-weight:600;">' . esc_html__('Cerca nei file uploads trovati', 'area051-orphan-media-cleaner') . '</label>';
             echo '<input type="search" id="area051-upload-search" name="a51_upload_search" value="' . esc_attr($upload_search_term) . '" placeholder="Percorso, nome file, URL" style="width:100%;">';
             echo '</div>';
+            echo '<div>';
+            echo '<label for="area051-upload-kind" style="display:block;margin:0 0 6px;font-weight:600;">' . esc_html__('Tipo', 'area051-orphan-media-cleaner') . '</label>';
+            echo '<select id="area051-upload-kind" name="a51_upload_kind">';
+            foreach ($upload_kind_labels as $kind_value => $kind_label) {
+                echo '<option value="' . esc_attr($kind_value) . '"' . selected($upload_kind, $kind_value, false) . '>' . esc_html($kind_label) . '</option>';
+            }
+            echo '</select>';
+            echo '</div>';
             echo '<div style="display:flex;gap:8px;align-items:center;">';
             echo '<button type="submit" class="button button-primary">' . esc_html__('Cerca', 'area051-orphan-media-cleaner') . '</button>';
-            if ($upload_search_term !== '') {
+            if ($upload_search_term !== '' || $upload_kind !== '') {
                 echo '<a class="button" href="' . esc_url(add_query_arg(array('page' => self::MENU_SLUG), admin_url('admin.php'))) . '">' . esc_html__('Cancella ricerca', 'area051-orphan-media-cleaner') . '</a>';
             }
             echo '</div>';
             echo '</form>';
 
-            if ($upload_search_term !== '') {
+            if ($upload_search_term !== '' || $upload_kind !== '') {
                 echo '<p><strong>' . esc_html__('Risultati filtrati:', 'area051-orphan-media-cleaner') . '</strong> ' . esc_html((string) count($filtered_upload_files)) . ' / ' . esc_html((string) count($upload_files)) . '</p>';
             }
 
             if (!empty($filtered_upload_files)) {
                 wp_nonce_field(self::NONCE_UPLOAD_AUDIT_DELETE, 'area051_upload_audit_delete_nonce_field');
                 echo '<p style="margin:0 0 12px;">';
-                echo '<button type="button" class="button button-secondary" id="area051-start-upload-audit-delete-btn">' . esc_html__('Elimina tutti i file trovati (background)', 'area051-orphan-media-cleaner') . '</button>';
+                echo '<button type="button" class="button button-secondary" id="area051-start-upload-audit-delete-btn">' . esc_html__('Elimina tutti i file mostrati, tranne quelli usati nei contenuti (background)', 'area051-orphan-media-cleaner') . '</button>';
                 echo ' <button type="button" class="button" id="area051-start-upload-audit-delete-selected-btn" style="margin-left:8px;">' . esc_html__('Elimina selezionati', 'area051-orphan-media-cleaner') . '</button>';
                 echo '</p>';
                 echo '<div id="area051-upload-audit-delete-progress" style="display:none;max-width:900px;border:1px solid #ccd0d4;padding:12px;background:#fff;margin:0 0 16px;">';
@@ -576,6 +605,7 @@ class Area051_Orphan_Media_Cleaner {
                 echo 'var doneUrl=' . wp_json_encode(add_query_arg(array('page' => self::MENU_SLUG, 'a51_notice' => 'upload_audit_delete_done'), admin_url('admin.php'))) . ';';
                 echo 'var displayedFiles=' . wp_json_encode(array_values($filtered_upload_files)) . ';';
                 echo 'var currentSearch=' . wp_json_encode($upload_search_term) . ';';
+                echo 'var currentKind=' . wp_json_encode($upload_kind) . ';';
                 echo 'function setProgress(processed,total,deleted,failed){';
                 echo 'var pct=total>0?Math.floor((processed/total)*100):0;';
                 echo 'if(pct<0){pct=0;}if(pct>100){pct=100;}';
@@ -615,11 +645,11 @@ class Area051_Orphan_Media_Cleaner {
                 echo 'xhr.onerror=function(){txt.textContent="Errore rete avvio delete uploads";btn.disabled=false;selectedBtn.disabled=false;};';
                 echo 'xhr.ontimeout=function(){txt.textContent="Timeout avvio delete uploads";btn.disabled=false;selectedBtn.disabled=false;};';
                 echo 'var payload="action=area051_upload_audit_delete_start&nonce="+encodeURIComponent(nonceField.value);';
-                echo 'if(useSearchScope){payload+="&search_term="+encodeURIComponent(currentSearch||"");}';
+                echo 'if(useSearchScope){payload+="&search_term="+encodeURIComponent(currentSearch||"")+"&kind="+encodeURIComponent(currentKind||"");}';
                 echo 'if(selectedFiles&&selectedFiles.length){payload+="&selected_files_json="+encodeURIComponent(JSON.stringify(selectedFiles));}';
                 echo 'xhr.send(payload);';
                 echo '}';
-                echo 'btn.addEventListener("click",function(){startDelete([],"Confermi eliminazione definitiva di tutti i file mostrati?\n(La ricerca corrente viene rispettata)",true);});';
+                echo 'btn.addEventListener("click",function(){startDelete([],"Confermi eliminazione definitiva di tutti i file mostrati?\n(Ricerca e tipo correnti vengono rispettati; i file usati nei contenuti vengono saltati)",true);});';
                 echo 'selectedBtn.addEventListener("click",function(){';
                 echo 'var checks=document.querySelectorAll(".area051-upload-row-check:checked");';
                 echo 'var files=[];';
@@ -635,7 +665,12 @@ class Area051_Orphan_Media_Cleaner {
                 $uploads = wp_get_upload_dir();
                 $baseurl = isset($uploads['baseurl']) ? (string) $uploads['baseurl'] : '';
                 echo '<table class="widefat striped" style="max-width:1100px">';
-                echo '<thead><tr><th style="width:36px;"><input type="checkbox" id="area051-check-all-upload-files" aria-label="' . esc_attr__('Seleziona tutti i file uploads', 'area051-orphan-media-cleaner') . '"></th><th style="width:80px;">#</th><th>' . esc_html__('Percorso relativo', 'area051-orphan-media-cleaner') . '</th><th>' . esc_html__('URL', 'area051-orphan-media-cleaner') . '</th></tr></thead><tbody>';
+                echo '<thead><tr><th style="width:36px;"><input type="checkbox" id="area051-check-all-upload-files" aria-label="' . esc_attr__('Seleziona tutti i file uploads', 'area051-orphan-media-cleaner') . '"></th><th style="width:80px;">#</th><th>' . esc_html__('Percorso relativo', 'area051-orphan-media-cleaner') . '</th><th>' . esc_html__('Tipo', 'area051-orphan-media-cleaner') . '</th><th>' . esc_html__('URL', 'area051-orphan-media-cleaner') . '</th></tr></thead><tbody>';
+                $short_kind_labels = array(
+                    'thumb_stale' => __('Miniatura (dimensione non più usata)', 'area051-orphan-media-cleaner'),
+                    'thumb_orphan' => __('Miniatura (originale non in libreria)', 'area051-orphan-media-cleaner'),
+                    'file' => __('File non registrato', 'area051-orphan-media-cleaner'),
+                );
                 $preview_files = array_slice($filtered_upload_files, 0, 100);
                 $index = 0;
                 foreach ($preview_files as $relative_file) {
@@ -646,6 +681,12 @@ class Area051_Orphan_Media_Cleaner {
                     echo '<td><input type="checkbox" class="area051-upload-row-check" data-file="' . esc_attr($relative_file) . '"></td>';
                     echo '<td>' . esc_html((string) $index) . '</td>';
                     echo '<td>' . esc_html($relative_file) . '</td>';
+                    $row_kind = isset($upload_file_kinds[$relative_file]) ? $upload_file_kinds[$relative_file] : 'file';
+                    echo '<td>' . esc_html(isset($short_kind_labels[$row_kind]) ? $short_kind_labels[$row_kind] : $row_kind);
+                    if (!empty($upload_in_content[$relative_file])) {
+                        echo '<br><strong style="color:#b32d2e;">' . esc_html__('Usato nei contenuti', 'area051-orphan-media-cleaner') . '</strong>';
+                    }
+                    echo '</td>';
                     echo '<td>' . ($file_url !== '' ? '<a href="' . esc_url($file_url) . '" target="_blank" rel="noopener">' . esc_html($file_url) . '</a>' : '-') . '</td>';
                     echo '</tr>';
                 }
@@ -654,7 +695,7 @@ class Area051_Orphan_Media_Cleaner {
                 if (count($filtered_upload_files) > 100) {
                     echo '<p><em>' . esc_html__('Anteprima limitata ai primi 100 file.', 'area051-orphan-media-cleaner') . '</em></p>';
                 }
-            } elseif ($upload_search_term !== '' && !empty($upload_files)) {
+            } elseif (($upload_search_term !== '' || $upload_kind !== '') && !empty($upload_files)) {
                 echo '<p><em>' . esc_html__('Nessun file uploads corrisponde alla ricerca corrente.', 'area051-orphan-media-cleaner') . '</em></p>';
             } else {
                 echo '<p><em>' . esc_html__('Nessun file non referenziato rilevato nel controllo uploads.', 'area051-orphan-media-cleaner') . '</em></p>';
@@ -951,12 +992,18 @@ class Area051_Orphan_Media_Cleaner {
         $search_term = isset($_POST['search_term']) ? sanitize_text_field(wp_unslash($_POST['search_term'])) : '';
         $search_term = trim($search_term);
 
+        $kind = isset($_POST['kind']) ? sanitize_key(wp_unslash($_POST['kind'])) : '';
+        if (!array_key_exists($kind, $this->get_upload_kind_labels())) {
+            $kind = '';
+        }
+
         if (!empty($selected_files)) {
             $files = array_values(array_intersect($all_files, $selected_files));
-        } elseif ($search_term !== '') {
-            $files = $this->filter_upload_audit_files($all_files, $search_term);
         } else {
-            $files = $all_files;
+            $files = $search_term !== '' ? $this->filter_upload_audit_files($all_files, $search_term) : $all_files;
+            $files = $this->filter_upload_audit_files_by_kind($files, $audit_result, $kind);
+            // Bulk delete never removes files still linked from pages: only an explicit selection can.
+            $files = $this->filter_upload_audit_files_by_kind($files, $audit_result, 'not_in_content');
         }
 
         if (empty($files)) {
@@ -1554,6 +1601,7 @@ class Area051_Orphan_Media_Cleaner {
                     'duration_seconds' => max(0, microtime(true) - $started_at_micro),
                     'unreferenced_files' => array_keys($unreferenced_files),
                 );
+                $result = $this->annotate_upload_audit_result($result, $registered_files);
                 $this->save_upload_audit_result($result);
                 delete_transient($state_key);
 
@@ -1892,13 +1940,172 @@ class Area051_Orphan_Media_Cleaner {
             : array();
         $files = array_values(array_filter($files));
 
+        $kinds_in = isset($result['file_kinds']) && is_array($result['file_kinds']) ? $result['file_kinds'] : array();
+        $in_content_in = isset($result['in_content']) && is_array($result['in_content']) ? $result['in_content'] : array();
+        $kinds = array();
+        $in_content = array();
+        foreach ($files as $file) {
+            if (isset($kinds_in[$file])) {
+                $kinds[$file] = (string) $kinds_in[$file];
+            }
+            if (!empty($in_content_in[$file])) {
+                $in_content[$file] = 1;
+            }
+        }
+
         return array(
             'generated_at' => isset($result['generated_at']) ? (int) $result['generated_at'] : 0,
             'total_files' => isset($result['total_files']) ? (int) $result['total_files'] : 0,
             'registered_files' => isset($result['registered_files']) ? (int) $result['registered_files'] : 0,
             'duration_seconds' => isset($result['duration_seconds']) ? (float) $result['duration_seconds'] : 0.0,
             'unreferenced_files' => $files,
+            'file_kinds' => $kinds,
+            'in_content' => $in_content,
             'rule_version' => isset($result['rule_version']) ? (int) $result['rule_version'] : 0,
+        );
+    }
+
+    /**
+     * "2024/05/foto-300x200.jpg" => "2024/05/foto"; '' when the name has no -WxH size suffix.
+     */
+    protected function get_thumbnail_parent_stem($relative_path) {
+        $name = pathinfo((string) $relative_path, PATHINFO_FILENAME);
+        if (!is_string($name) || !preg_match('/^(.+)-\d+x\d+(@\dx)?$/i', $name, $m)) {
+            return '';
+        }
+        $dir = dirname((string) $relative_path);
+        $parent = preg_replace('/-(scaled|rotated)$/i', '', $m[1]);
+        return ($dir === '.' || $dir === '') ? $parent : $dir . '/' . $parent;
+    }
+
+    /**
+     * "2024/05/foto-scaled.jpg" => "2024/05/foto".
+     */
+    protected function get_upload_file_stem($relative_path) {
+        $name = pathinfo((string) $relative_path, PATHINFO_FILENAME);
+        $name = preg_replace('/-(scaled|rotated)$/i', '', (string) $name);
+        $dir = dirname((string) $relative_path);
+        return ($dir === '.' || $dir === '') ? $name : $dir . '/' . $name;
+    }
+
+    /**
+     * Adds to an upload audit result:
+     * - file_kinds: thumb_stale (size no longer registered, original still in the library),
+     *   thumb_orphan (thumbnail whose original is not in the library), file (any other image);
+     * - in_content: files whose URL still appears in posts, meta or options (deleting them breaks pages).
+     */
+    protected function annotate_upload_audit_result($result, $registered) {
+        $files = isset($result['unreferenced_files']) && is_array($result['unreferenced_files']) ? $result['unreferenced_files'] : array();
+
+        $registered_stems = array();
+        foreach (array_keys((array) $registered) as $path) {
+            $registered_stems[strtolower($this->get_upload_file_stem($path))] = 1;
+        }
+
+        $kinds = array();
+        foreach ($files as $file) {
+            $file = $this->normalize_relative_upload_path($file);
+            if ($file === '') {
+                continue;
+            }
+            $parent = $this->get_thumbnail_parent_stem($file);
+            if ($parent === '') {
+                $kinds[$file] = 'file';
+            } else {
+                $kinds[$file] = isset($registered_stems[strtolower($parent)]) ? 'thumb_stale' : 'thumb_orphan';
+            }
+        }
+
+        $result['file_kinds'] = $kinds;
+        $result['in_content'] = $this->find_upload_files_used_in_content(array_keys($kinds));
+        return $result;
+    }
+
+    protected function find_upload_files_used_in_content($files) {
+        global $wpdb;
+
+        $wanted = array();
+        foreach ((array) $files as $file) {
+            $wanted[strtolower((string) $file)] = (string) $file;
+        }
+        if (empty($wanted)) {
+            return array();
+        }
+
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(300);
+        }
+
+        $like = '%' . $wpdb->esc_like('uploads') . '%';
+        $sources = array(
+            "SELECT ID AS id, post_content AS text FROM {$wpdb->posts} WHERE post_type <> 'revision' AND post_content LIKE %s AND ID > %d ORDER BY ID ASC LIMIT 200",
+            "SELECT meta_id AS id, meta_value AS text FROM {$wpdb->postmeta} WHERE meta_value LIKE %s AND meta_id > %d ORDER BY meta_id ASC LIMIT 200",
+            "SELECT option_id AS id, option_value AS text FROM {$wpdb->options} WHERE option_value LIKE %s AND option_id > %d AND option_name <> '" . esc_sql(self::OPTION_UPLOAD_AUDIT_RESULT) . "' ORDER BY option_id ASC LIMIT 200",
+        );
+
+        $used = array();
+        foreach ($sources as $sql) {
+            $last_id = 0;
+            do {
+                $rows = $wpdb->get_results($wpdb->prepare($sql, $like, $last_id));
+                if (empty($rows)) {
+                    break;
+                }
+                foreach ($rows as $row) {
+                    $last_id = (int) $row->id;
+                    // JSON (blocks, builders) escapes slashes: "uploads\/2024\/05\/foto.jpg".
+                    $text = str_replace('\\/', '/', (string) $row->text);
+                    if (!preg_match_all('#uploads/([12][0-9]{3}/[^\s"\'<>()?\#\\\\]+?\.(?:jpe?g|png|gif|webp|avif|bmp|tiff?|svg))#i', $text, $matches)) {
+                        continue;
+                    }
+                    foreach ($matches[1] as $match) {
+                        $key = strtolower(rawurldecode($match));
+                        if (isset($wanted[$key])) {
+                            $used[$wanted[$key]] = 1;
+                        }
+                    }
+                }
+            } while (count($rows) === 200);
+        }
+
+        return $used;
+    }
+
+    /**
+     * @param string $kind '', thumb (any thumbnail), thumb_stale, thumb_orphan, file, in_content, not_in_content.
+     */
+    protected function filter_upload_audit_files_by_kind($files, $audit_result, $kind) {
+        if ($kind === '') {
+            return array_values($files);
+        }
+        $kinds = isset($audit_result['file_kinds']) && is_array($audit_result['file_kinds']) ? $audit_result['file_kinds'] : array();
+        $in_content = isset($audit_result['in_content']) && is_array($audit_result['in_content']) ? $audit_result['in_content'] : array();
+
+        $out = array();
+        foreach ($files as $file) {
+            $file_kind = isset($kinds[$file]) ? $kinds[$file] : 'file';
+            $used = !empty($in_content[$file]);
+            if (
+                ($kind === 'thumb' && strpos($file_kind, 'thumb_') === 0) ||
+                ($kind === $file_kind) ||
+                ($kind === 'in_content' && $used) ||
+                ($kind === 'not_in_content' && !$used)
+            ) {
+                $out[] = $file;
+            }
+        }
+        return $out;
+    }
+
+    protected function get_upload_kind_labels() {
+        return array(
+            '' => __('Tutti', 'area051-orphan-media-cleaner'),
+            'thumb' => __('Solo miniature', 'area051-orphan-media-cleaner'),
+            'thumb_stale' => __('Miniature di dimensioni non più usate (originale in libreria)', 'area051-orphan-media-cleaner'),
+            'thumb_orphan' => __('Miniature di file non in libreria', 'area051-orphan-media-cleaner'),
+            'file' => __('Solo file non miniatura', 'area051-orphan-media-cleaner'),
+            'in_content' => __('Ancora usati nei contenuti', 'area051-orphan-media-cleaner'),
+            'not_in_content' => __('Non usati nei contenuti', 'area051-orphan-media-cleaner'),
         );
     }
 
@@ -1953,13 +2160,13 @@ class Area051_Orphan_Media_Cleaner {
             }
         }
 
-        return array(
+        return $this->annotate_upload_audit_result(array(
             'generated_at' => time(),
             'total_files' => $total_files,
             'registered_files' => count($registered),
             'duration_seconds' => max(0, microtime(true) - $started),
             'unreferenced_files' => array_values(array_unique($unreferenced)),
-        );
+        ), $registered);
     }
 
     protected function collect_registered_upload_files() {
