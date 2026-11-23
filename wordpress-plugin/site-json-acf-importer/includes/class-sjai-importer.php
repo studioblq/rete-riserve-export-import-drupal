@@ -3577,10 +3577,13 @@ JS;
         $skip_thumbnails = !empty($sjai_settings['skip_thumbnails']);
         if ($skip_thumbnails) {
             add_filter('intermediate_image_sizes_advanced', '__return_empty_array', 999);
+            // No -scaled copy either: resizing a huge photo loads it whole in memory and can kill PHP (HTTP 503).
+            add_filter('big_image_size_threshold', '__return_false', 999);
         }
         $attachment_id = media_handle_sideload($file_array, (int) $post_id);
         if ($skip_thumbnails) {
             remove_filter('intermediate_image_sizes_advanced', '__return_empty_array', 999);
+            remove_filter('big_image_size_threshold', '__return_false', 999);
         }
         $this->timing_sideload += microtime(true) - $sideload_started_at;
 
@@ -4417,6 +4420,18 @@ JS;
         }
     }
 
+    /**
+     * Records an imported post right away, so it is kept even if a later record crashes the request.
+     */
+    protected function store_imported_post_id($user_id, $post_id) {
+        $stored = get_transient('sjai_imported_post_ids_' . $user_id);
+        if (!is_array($stored)) {
+            $stored = array();
+        }
+        $stored[] = (int) $post_id;
+        set_transient('sjai_imported_post_ids_' . $user_id, $stored, DAY_IN_SECONDS);
+    }
+
     public function ajax_process_batch() {
         $this->prepare_ajax_json_response('sjai_process_batch');
 
@@ -4493,6 +4508,28 @@ JS;
 
         $imported_post_ids = array();
 
+        // A record that kills PHP (memory/CPU limit on huge photos) returns HTTP 503 without
+        // running any code below: the in-flight marker survives, so after two crashes on the
+        // same record it is skipped instead of blocking the import forever.
+        if (isset($state['inflight_index']) && (int) $state['inflight_index'] === $cursor) {
+            $state['inflight_failures'] = isset($state['inflight_failures']) ? (int) $state['inflight_failures'] + 1 : 1;
+            if ($state['inflight_failures'] >= 2 && $cursor < $data_count) {
+                $crashed_item = $data[$cursor];
+                $crashed_nid = is_array($crashed_item) && isset($crashed_item['nid']) ? (string) $crashed_item['nid'] : '-';
+                $state['errors'][] = array(
+                    'index' => $cursor,
+                    'message' => sprintf('Record #%d (nid %s) saltato: il server si e bloccato due volte importandolo (probabile immagine troppo grande).', $cursor + 1, $crashed_nid),
+                );
+                $this->log_import_debug(sprintf('Record #%d nid=%s saltato dopo %d crash del server', $cursor + 1, $crashed_nid, $state['inflight_failures']));
+                $state['skipped']++;
+                $processed_overall++;
+                $cursor++;
+                unset($state['inflight_index'], $state['inflight_failures']);
+            }
+        } else {
+            unset($state['inflight_index'], $state['inflight_failures']);
+        }
+
         try {
             for ($index = $cursor; $index < $data_count; $index++) {
             if ((microtime(true) - $request_started_at) >= $max_request_seconds) {
@@ -4532,8 +4569,18 @@ JS;
                 continue;
             }
 
+            // Checkpoint before the record: progress so far survives a crash on this record.
+            $state['processed'] = $processed_overall;
+            $state['cursor'] = $index;
+            if (!isset($state['inflight_index']) || (int) $state['inflight_index'] !== $index) {
+                $state['inflight_failures'] = 0;
+            }
+            $state['inflight_index'] = $index;
+            set_transient('sjai_import_state_' . $user_id, $state, DAY_IN_SECONDS);
+
             $record_started_at = microtime(true);
             $result = $this->import_single_item($item, $settings, $type_map, $acf_map, $acf_path_map, $field_map_v2, true);
+            unset($state['inflight_index'], $state['inflight_failures']);
             $this->log_import_debug(sprintf('Record #%d nid=%s lang=%s status=%s post_id=%d time=%.2fs (immagini: download %.2fs, elaborazione %.2fs)', $index + 1, isset($item['nid']) ? (string) $item['nid'] : '-', $this->get_item_langcode($item), isset($result['status']) ? (string) $result['status'] : '-', isset($result['post_id']) ? (int) $result['post_id'] : 0, microtime(true) - $record_started_at, $this->timing_download, $this->timing_sideload));
             $this->timing_download = 0.0;
             $this->timing_sideload = 0.0;
@@ -4545,12 +4592,12 @@ JS;
             if ($result['status'] === 'created') {
                 $state['created']++;
                 if (!empty($result['post_id'])) {
-                    $imported_post_ids[] = (int) $result['post_id'];
+                    $this->store_imported_post_id($user_id, (int) $result['post_id']);
                 }
             } elseif ($result['status'] === 'updated') {
                 $state['updated']++;
                 if (!empty($result['post_id'])) {
-                    $imported_post_ids[] = (int) $result['post_id'];
+                    $this->store_imported_post_id($user_id, (int) $result['post_id']);
                 }
             } elseif ($result['status'] === 'skipped') {
                 $state['skipped']++;
@@ -4579,15 +4626,6 @@ JS;
             isset($state['image_stats']) && is_array($state['image_stats']) ? $state['image_stats'] : array(),
             $batch_image_stats
         );
-
-        if (!empty($imported_post_ids)) {
-            $stored = get_transient('sjai_imported_post_ids_' . $user_id);
-            if (!is_array($stored)) {
-                $stored = array();
-            }
-            $stored = array_merge($stored, $imported_post_ids);
-            set_transient('sjai_imported_post_ids_' . $user_id, $stored, DAY_IN_SECONDS);
-        }
 
         set_transient('sjai_import_state_' . $user_id, $state, DAY_IN_SECONDS);
 
