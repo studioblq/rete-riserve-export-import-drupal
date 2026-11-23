@@ -16,6 +16,7 @@ class SJAI_Importer {
     const NONCE_ACTION_APPLY_MAPPING = 'sjai_apply_mapping';
     const NONCE_ACTION_CLEAN_DUPLICATES = 'sjai_cleanup_duplicates';
     const NONCE_ACTION_LINK_TRANSLATIONS = 'sjai_link_translations';
+    const NONCE_ACTION_FIX_DATES = 'sjai_fix_post_dates';
 
     /** @var SJAI_Multilang|null */
     protected $multilang = null;
@@ -57,6 +58,7 @@ class SJAI_Importer {
         add_action('admin_post_sjai_apply_mapping', array($this, 'handle_apply_mapping'));
         add_action('admin_post_sjai_cleanup_duplicates', array($this, 'handle_cleanup_duplicates'));
         add_action('admin_post_sjai_link_translations', array($this, 'handle_link_translations'));
+        add_action('admin_post_sjai_fix_post_dates', array($this, 'handle_fix_post_dates'));
         add_action('wp_ajax_sjai_start_async_import', array($this, 'ajax_start_async_import'));
         add_action('wp_ajax_sjai_process_batch', array($this, 'ajax_process_batch'));
     }
@@ -639,6 +641,16 @@ class SJAI_Importer {
             echo '</div>';
 
             echo '<div style="margin-top:12px;max-width:1100px;border:1px solid #dcdcde;background:#fff;padding:12px;border-radius:4px;">';
+            echo '<h3 style="margin-top:0;">' . esc_html__('Ricalcola date pubblicazione', 'site-json-acf-importer') . '</h3>';
+            echo '<p style="margin:0 0 10px;">' . esc_html__('Per i contenuti già importati: rilegge i dati Drupal salvati in ogni post e applica le righe "Data pubblicazione (post_date)" della mappatura attuale (la prima con un valore, altrimenti la data di creazione Drupal). Non scarica nulla e non modifica altri campi.', 'site-json-acf-importer') . '</p>';
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+            wp_nonce_field(self::NONCE_ACTION_FIX_DATES);
+            echo '<input type="hidden" name="action" value="sjai_fix_post_dates" />';
+            echo '<button type="submit" class="button button-secondary">' . esc_html__('Ricalcola date', 'site-json-acf-importer') . '</button>';
+            echo '</form>';
+            echo '</div>';
+
+            echo '<div style="margin-top:12px;max-width:1100px;border:1px solid #dcdcde;background:#fff;padding:12px;border-radius:4px;">';
             echo '<h3 style="margin-top:0;">' . esc_html__('Pulizia duplicati importati', 'site-json-acf-importer') . '</h3>';
             echo '<p style="margin:0 0 10px;">' . esc_html__('Rimuove i contenuti importati duplicati trovati tramite UUID/NID o identità sorgente e cancella anche gli allegati figli del duplicato.', 'site-json-acf-importer') . '</p>';
             echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(\'' . esc_js(__('Confermi la rimozione dei duplicati importati e dei loro allegati? Questa operazione è distruttiva.', 'site-json-acf-importer')) . '\');">';
@@ -1054,6 +1066,162 @@ class SJAI_Importer {
         exit;
     }
 
+    /**
+     * Date for an imported item from the current mapping: first non-empty "post_date" row,
+     * then the Drupal created/changed fallbacks. 'rule' is false when the type has no post_date row.
+     */
+    protected function compute_mapped_post_date($item, $field_map_v2) {
+        $source_type = isset($item['type']) ? sanitize_key($item['type']) : '';
+        if ($source_type === '' || empty($field_map_v2[$source_type]) || !is_array($field_map_v2[$source_type])) {
+            return array('rule' => false);
+        }
+
+        $rule = false;
+        foreach ($field_map_v2[$source_type] as $entry) {
+            if (!is_array($entry) || !isset($entry['wp']) || trim((string) $entry['wp']) !== 'wp:post_date') {
+                continue;
+            }
+            $rule = true;
+            $src_field = isset($entry['src']) ? sanitize_key($entry['src']) : '';
+            if ($src_field === '' || !array_key_exists($src_field, $item)) {
+                continue;
+            }
+            $value = $item[$src_field];
+            $path = isset($entry['path']) ? trim((string) $entry['path']) : '';
+            if ($path !== '') {
+                $value = $this->extract_value_by_path($value, $path);
+            }
+            $parsed = $this->normalize_wp_post_date($value);
+            if (!empty($parsed['post_date'])) {
+                $parsed['rule'] = true;
+                $parsed['source'] = $src_field;
+                return $parsed;
+            }
+        }
+
+        if (!$rule) {
+            return array('rule' => false);
+        }
+
+        $parsed = $this->resolve_post_date_with_fallback('', $item);
+        $parsed['rule'] = true;
+        $parsed['source'] = 'fallback';
+        return $parsed;
+    }
+
+    public function handle_fix_post_dates() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('Non autorizzato.', 'site-json-acf-importer'));
+        }
+
+        check_admin_referer(self::NONCE_ACTION_FIX_DATES);
+
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(0);
+        }
+
+        global $wpdb;
+        $settings = $this->get_settings();
+        $field_map_v2 = is_array($settings['field_map_v2']) ? $settings['field_map_v2'] : array();
+
+        $result = array(
+            'posts' => 0,
+            'updated' => 0,
+            'unchanged' => 0,
+            'no_rule' => 0,
+            'no_value' => 0,
+            'samples' => array(),
+        );
+
+        // Direct query: no multilingual filters, every imported post in any language.
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT p.ID, p.post_date, m.meta_value FROM {$wpdb->posts} p INNER JOIN {$wpdb->postmeta} m ON m.post_id = p.ID AND m.meta_key = %s WHERE p.post_type NOT IN ('revision', 'attachment') ORDER BY p.ID ASC",
+            '_sjai_raw_item'
+        ));
+
+        foreach ((array) $rows as $row) {
+            $result['posts']++;
+            $item = json_decode((string) $row->meta_value, true);
+            if (!is_array($item)) {
+                $result['no_value']++;
+                continue;
+            }
+
+            $date = $this->compute_mapped_post_date($item, $field_map_v2);
+            if (empty($date['rule'])) {
+                $result['no_rule']++;
+                continue;
+            }
+            if (empty($date['post_date'])) {
+                $result['no_value']++;
+                continue;
+            }
+
+            if ((string) $row->post_date === $date['post_date']) {
+                $result['unchanged']++;
+                continue;
+            }
+
+            // Written directly: save_post hooks (multilingual date sync, builders) cannot overwrite it.
+            $wpdb->update(
+                $wpdb->posts,
+                array('post_date' => $date['post_date'], 'post_date_gmt' => $date['post_date_gmt']),
+                array('ID' => (int) $row->ID)
+            );
+            clean_post_cache((int) $row->ID);
+            $result['updated']++;
+
+            if (count($result['samples']) < 8) {
+                $result['samples'][] = sprintf(
+                    '#%d nid %s: %s -> %s (da %s)',
+                    (int) $row->ID,
+                    isset($item['nid']) ? (string) $item['nid'] : '-',
+                    (string) $row->post_date,
+                    $date['post_date'],
+                    $date['source']
+                );
+            }
+        }
+
+        $this->log_import_debug('Ricalcola date: ' . wp_json_encode($result));
+        set_transient('sjai_last_fix_dates_' . get_current_user_id(), $result, MINUTE_IN_SECONDS * 10);
+
+        wp_safe_redirect(add_query_arg(
+            array(
+                'page' => 'site-json-acf-importer',
+                'sjai_notice' => 'post_dates_fixed',
+            ),
+            admin_url('admin.php')
+        ));
+        exit;
+    }
+
+    protected function render_fix_post_dates_notice() {
+        $result = get_transient('sjai_last_fix_dates_' . get_current_user_id());
+        if (!is_array($result)) {
+            return;
+        }
+
+        echo '<div class="notice notice-success is-dismissible"><p>';
+        echo esc_html(sprintf(
+            __('Date ricalcolate. Post importati: %1$d. Aggiornati: %2$d. Già corretti: %3$d. Senza riga post_date nella mappatura del loro tipo: %4$d. Senza data nei dati Drupal: %5$d.', 'site-json-acf-importer'),
+            (int) $result['posts'],
+            (int) $result['updated'],
+            (int) $result['unchanged'],
+            (int) $result['no_rule'],
+            (int) $result['no_value']
+        ));
+        echo '</p>';
+        if (!empty($result['samples'])) {
+            echo '<ul style="margin:0 0 8px 18px;list-style:disc;">';
+            foreach ($result['samples'] as $sample) {
+                echo '<li>' . esc_html($sample) . '</li>';
+            }
+            echo '</ul>';
+        }
+        echo '</div>';
+    }
+
     protected function render_translation_link_notice() {
         $result = get_transient('sjai_last_translation_link_' . get_current_user_id());
         if (!is_array($result)) {
@@ -1117,6 +1285,10 @@ class SJAI_Importer {
 
         if ($notice === 'translations_linked') {
             $this->render_translation_link_notice();
+        }
+
+        if ($notice === 'post_dates_fixed') {
+            $this->render_fix_post_dates_notice();
         }
 
         if ($notice === 'translations_no_plugin') {
@@ -4482,6 +4654,15 @@ JS;
             if (empty($settings)) {
                 ob_end_clean();
                 wp_send_json_error('Impostazioni non trovate nello stato.');
+            }
+
+            // A resumed import keeps its source and range, but uses the mapping saved now:
+            // changes made while it was paused (e.g. a new post_date row) apply right away.
+            $current_settings = $this->get_settings();
+            foreach (array('type_map_ui', 'acf_map_ui', 'acf_map_path_ui', 'field_map_v2', 'skip_thumbnails') as $mapping_key) {
+                if (array_key_exists($mapping_key, $current_settings)) {
+                    $settings[$mapping_key] = $current_settings[$mapping_key];
+                }
             }
 
             // The JSON is downloaded once at start: re-fetching it for every batch cost seconds per record.

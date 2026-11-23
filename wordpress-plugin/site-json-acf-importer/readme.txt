@@ -4,7 +4,7 @@ Tags: import, json, acf, drupal
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 1.6.14
+Stable tag: 1.6.15
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -31,6 +31,10 @@ Importa contenuti JSON da endpoint esterno (es. Drupal) e li salva in WordPress,
 - Se abiliti il parent linking, lo Step 1 importa prima tutti i contenuti e poi esegue un secondo giro per valorizzare post_parent.
 
 == Changelog ==
+
+= 1.6.15 =
+* NEW: Pulsante "Ricalcola date": applica la data pubblicazione della mappatura attuale ai post già importati, rileggendo i dati Drupal salvati (senza reimportare)
+* FIX: Un import asincrono ripreso usa la mappatura attuale, non quella salvata quando era partito
 
 = 1.6.14 =
 * NEW: Più righe mappate su "Data pubblicazione (post_date)" valgono come alternative: si usa la prima con un valore, e la data di creazione Drupal solo se sono tutte vuote
