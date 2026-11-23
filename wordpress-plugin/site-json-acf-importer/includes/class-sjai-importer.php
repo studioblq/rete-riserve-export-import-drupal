@@ -2681,7 +2681,7 @@ function processBatch(nonce, total, attempt){
             if(resp.success){
                 updateProgress(resp.data, total);
                 if(!resp.data.done){
-                    setTimeout(function(){ processBatch(nonce, total, 0); }, 100);
+                    setTimeout(function(){ processBatch(nonce, total, 0); }, 3000);
                 } else {
                     showResult(resp.data);
                     btn.disabled = false;
@@ -4470,7 +4470,7 @@ JS;
         // $max_request_seconds, so a slow gallery still fits in the browser timeout (60s).
         $batch_size = 25;
         $request_started_at = microtime(true);
-        $max_request_seconds = 15;
+        $max_request_seconds = 10;
         // One post per batch: allow its whole gallery to download in a single request.
         $this->sideload_deadline_ts = $request_started_at + 35;
         $this->sideload_attempts_in_request = 0;
