@@ -12,18 +12,23 @@
  * How updates are published: a GitHub Action builds one zip per plugin, attaches
  * it to a release tagged "<slug>-v<version>" and refreshes manifest.json on the
  * "updates" release. This class reads that manifest.
+ *
+ * V2: the update is also injected when the update_plugins transient is read.
+ * WordPress runs the "update_plugins_github.com" filter only after a successful
+ * call to api.wordpress.org: on slow hosting that call times out and the GitHub
+ * update never appeared.
  */
 
 if (!defined('ABSPATH')) {
     exit;
 }
 
-if (!class_exists('Area051_GitHub_Updater_V1', false)) {
+if (!class_exists('Area051_GitHub_Updater_V2', false)) {
 
-    class Area051_GitHub_Updater_V1 {
+    class Area051_GitHub_Updater_V2 {
         const MANIFEST_URL = 'https://github.com/studioblq/rete-riserve-export-import-drupal/releases/download/updates/manifest.json';
         const CACHE_KEY = 'area051_gh_manifest_v1';
-        const CACHE_TTL = 6 * HOUR_IN_SECONDS;
+        const CACHE_TTL = HOUR_IN_SECONDS;
         const ERROR_TTL = 30 * MINUTE_IN_SECONDS;
 
         /** @var array<string,bool> Hooks registered once per request, shared by all instances. */
@@ -32,6 +37,9 @@ if (!class_exists('Area051_GitHub_Updater_V1', false)) {
         protected $plugin_file;
         protected $basename;
         protected $slug;
+
+        /** @var string|null Installed version, read once per request. */
+        protected $installed_version = null;
 
         /**
          * @param string $plugin_file Main plugin file (__FILE__).
@@ -49,6 +57,8 @@ if (!class_exists('Area051_GitHub_Updater_V1', false)) {
 
             // Plugins with "Update URI: https://github.com/..." are checked through this filter (WP 5.8+).
             add_filter('update_plugins_github.com', array($this, 'filter_update'), 10, 4);
+            // Works even when the api.wordpress.org check fails (see class notes).
+            add_filter('site_transient_update_plugins', array($this, 'inject_update'), 20);
             add_filter('plugins_api', array($this, 'filter_plugins_api'), 20, 3);
             add_filter('upgrader_source_selection', array($this, 'fix_source_folder'), 10, 4);
             add_action('upgrader_process_complete', array(__CLASS__, 'flush_cache'), 10, 0);
@@ -114,6 +124,66 @@ if (!class_exists('Area051_GitHub_Updater_V1', false)) {
             return $remote;
         }
 
+        protected function get_installed_version() {
+            if ($this->installed_version === null) {
+                $data = get_file_data($this->plugin_file, array('Version' => 'Version'));
+                $this->installed_version = isset($data['Version']) ? (string) $data['Version'] : '';
+            }
+            return $this->installed_version;
+        }
+
+        protected function build_update($remote) {
+            return array(
+                'id' => $this->basename,
+                'slug' => $this->slug,
+                'plugin' => $this->basename,
+                'version' => (string) $remote['version'],
+                'new_version' => (string) $remote['version'],
+                'url' => isset($remote['url']) ? (string) $remote['url'] : '',
+                'package' => (string) $remote['package'],
+                'tested' => isset($remote['tested']) ? (string) $remote['tested'] : '',
+                'requires' => isset($remote['requires']) ? (string) $remote['requires'] : '',
+                'requires_php' => isset($remote['requires_php']) ? (string) $remote['requires_php'] : '',
+            );
+        }
+
+        /**
+         * Adds (or removes) this plugin's update in the update_plugins transient.
+         *
+         * @param object|false $transient
+         */
+        public function inject_update($transient) {
+            if (!is_object($transient) || (!is_admin() && !wp_doing_cron())) {
+                return $transient;
+            }
+
+            $installed = $this->get_installed_version();
+            if ($installed === '') {
+                return $transient;
+            }
+
+            $remote = $this->get_remote();
+            if ($remote === null) {
+                return $transient;
+            }
+
+            if (!isset($transient->response) || !is_array($transient->response)) {
+                $transient->response = array();
+            }
+
+            if (version_compare((string) $remote['version'], $installed, '>')) {
+                $transient->response[$this->basename] = (object) $this->build_update($remote);
+                if (isset($transient->no_update) && is_array($transient->no_update)) {
+                    unset($transient->no_update[$this->basename]);
+                }
+            } elseif (isset($transient->response[$this->basename])) {
+                // Already up to date (e.g. zip uploaded by hand): drop a stale notice.
+                unset($transient->response[$this->basename]);
+            }
+
+            return $transient;
+        }
+
         /**
          * "Verifica di nuovo" on Dashboard > Updates also refreshes the manifest.
          */
@@ -140,17 +210,7 @@ if (!class_exists('Area051_GitHub_Updater_V1', false)) {
             }
 
             // WordPress compares "version" with the installed one and shows the notice when it is higher.
-            return array(
-                'id' => $this->basename,
-                'slug' => $this->slug,
-                'plugin' => $this->basename,
-                'version' => (string) $remote['version'],
-                'url' => isset($remote['url']) ? (string) $remote['url'] : '',
-                'package' => (string) $remote['package'],
-                'tested' => isset($remote['tested']) ? (string) $remote['tested'] : '',
-                'requires' => isset($remote['requires']) ? (string) $remote['requires'] : '',
-                'requires_php' => isset($remote['requires_php']) ? (string) $remote['requires_php'] : '',
-            );
+            return $this->build_update($remote);
         }
 
         /**

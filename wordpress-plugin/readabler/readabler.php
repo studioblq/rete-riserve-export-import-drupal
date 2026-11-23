@@ -3,7 +3,7 @@
  * Plugin Name: Readabler Accessibility
  * Plugin URI:  https://www.area051.com
  * Description: Integra il widget di accessibilità Readabler con un interruttore per attivarlo/disattivarlo.
- * Version:     1.1.1
+ * Version:     1.1.2
  * Author:      area051.com
  * Author URI:  https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -17,9 +17,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 require_once __DIR__ . '/lib/class-area051-github-updater.php';
-new Area051_GitHub_Updater_V1(__FILE__, 'readabler');
+new Area051_GitHub_Updater_V2(__FILE__, 'readabler');
 
-define( 'READABLER_VERSION', '1.1.1' );
+define( 'READABLER_VERSION', '1.1.2' );
 define( 'READABLER_DIR', plugin_dir_path( __FILE__ ) );
 define( 'READABLER_URL', plugin_dir_url( __FILE__ ) );
 

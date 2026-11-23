@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Reti Riserve Setting
  * Description: Logo default e sticky, pagina di accesso personalizzata, disattivazione ed eliminazione dei commenti.
- * Version: 1.4.2
+ * Version: 1.4.3
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 }
 
 require_once __DIR__ . '/lib/class-area051-github-updater.php';
-new Area051_GitHub_Updater_V1(__FILE__, 'retiriserve-setting');
+new Area051_GitHub_Updater_V2(__FILE__, 'retiriserve-setting');
 
 /**
  * TRUE when the old copy of this plugin (folder "setting", file setting.php) is active.

@@ -23,7 +23,7 @@ BUMP = '--bump' in sys.argv
 
 LOADER = (
     "require_once __DIR__ . '/lib/class-area051-github-updater.php';\n"
-    "new Area051_GitHub_Updater_V1(__FILE__, '{slug}');\n"
+    "new Area051_GitHub_Updater_V2(__FILE__, '{slug}');\n"
 )
 
 
@@ -77,14 +77,14 @@ for slug, main in plugins():
 
     version_match = re.search(r'^\s*\*\s*Version:\s*(\S+)', header, re.M)
     version = version_match.group(1)
-    if BUMP and 'Area051_GitHub_Updater_V1' not in body:
+    if BUMP and 'Area051_GitHub_Updater_V2' not in body:
         new_version = bump(version)
         header = set_header(header, 'Version', new_version)
         # Keep version constants in sync, e.g. define('SJAI_VERSION', '1.6.0').
         body = re.sub(r"(define\(\s*'[A-Z0-9_]*VERSION'\s*,\s*')" + re.escape(version) + "'", r"\g<1>" + new_version + "'", body)
         version = new_version
 
-    if 'Area051_GitHub_Updater_V1' not in body:
+    if 'Area051_GitHub_Updater_V2' not in body:
         guard = re.search(r"if\s*\(\s*!\s*defined\(\s*'ABSPATH'\s*\)\s*\)\s*\{\s*exit;\s*\}\n", body)
         if not guard:
             raise SystemExit('ABSPATH guard not found in ' + main)

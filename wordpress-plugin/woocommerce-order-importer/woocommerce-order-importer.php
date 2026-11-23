@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Order Importer
  * Description: Importa ordini WooCommerce da un sito remoto tramite REST API nel sito corrente.
- * Version: 1.5.2
+ * Version: 1.5.3
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -16,9 +16,9 @@ if (!defined('ABSPATH')) {
 }
 
 require_once __DIR__ . '/lib/class-area051-github-updater.php';
-new Area051_GitHub_Updater_V1(__FILE__, 'woocommerce-order-importer');
+new Area051_GitHub_Updater_V2(__FILE__, 'woocommerce-order-importer');
 
-define('WCOI_VERSION', '1.5.2');
+define('WCOI_VERSION', '1.5.3');
 define('WCOI_PLUGIN_FILE', __FILE__);
 define('WCOI_PLUGIN_DIR', plugin_dir_path(__FILE__));
 

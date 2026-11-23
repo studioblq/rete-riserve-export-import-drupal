@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Rete di Riserve Owl Carousel
  * Description: Gestione template item e shortcode per creare carousel Owl con campi WordPress/ACF.
- * Version: 1.1.1
+ * Version: 1.1.2
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 }
 
 require_once __DIR__ . '/lib/class-area051-github-updater.php';
-new Area051_GitHub_Updater_V1(__FILE__, 'rete-riserve-owl-carousel');
+new Area051_GitHub_Updater_V2(__FILE__, 'rete-riserve-owl-carousel');
 
 class ReteRiserveOwlCarousel {
     const PARENT_MENU_SLUG = 'reti-riserve-suite';

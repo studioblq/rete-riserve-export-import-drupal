@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Area051 WP Shortcodes
  * Description: Raccolta di shortcode utili con builder interattivo.
- * Version: 1.7.2
+ * Version: 1.7.3
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 }
 
 require_once __DIR__ . '/lib/class-area051-github-updater.php';
-new Area051_GitHub_Updater_V1(__FILE__, 'reti-riserve-shortcodes');
+new Area051_GitHub_Updater_V2(__FILE__, 'reti-riserve-shortcodes');
 
 require_once plugin_dir_path(__FILE__) . 'includes/class-rrs-shortcodes.php';
 

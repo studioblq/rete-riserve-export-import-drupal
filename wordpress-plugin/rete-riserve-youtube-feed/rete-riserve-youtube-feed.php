@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Rete di Riserve YouTube Feed
  * Description: Mostra gli ultimi video di un canale YouTube tramite shortcode. L'ID canale si imposta dalla pagina del plugin, il layout (griglia o in linea) e il numero di video si scelgono nello shortcode.
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 }
 
 require_once __DIR__ . '/lib/class-area051-github-updater.php';
-new Area051_GitHub_Updater_V1(__FILE__, 'rete-riserve-youtube-feed');
+new Area051_GitHub_Updater_V2(__FILE__, 'rete-riserve-youtube-feed');
 
 class ReteRiserveYouTubeFeed {
     const MENU_SLUG = 'rete-riserve-youtube-feed';
