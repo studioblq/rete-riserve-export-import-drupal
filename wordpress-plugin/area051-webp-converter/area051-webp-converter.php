@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Area051 WebP Converter
  * Description: Converte in WebP compresso le immagini JPEG e PNG della libreria media, con backup opzionale e redirect dai vecchi indirizzi.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -35,8 +35,8 @@ class Area051_WebP_Converter {
     public function init() {
         add_action('admin_menu', array($this, 'register_admin_menu'), 20);
         add_action('admin_post_area051_webp_save_settings', array($this, 'handle_save_settings'));
-        add_action('admin_post_area051_webp_convert_one', array($this, 'handle_convert_one'));
-        add_action('admin_post_area051_webp_restore_one', array($this, 'handle_restore_one'));
+        add_action('wp_ajax_area051_webp_convert_one', array($this, 'ajax_convert_one'));
+        add_action('wp_ajax_area051_webp_restore_one', array($this, 'ajax_restore_one'));
         add_action('wp_ajax_area051_webp_start', array($this, 'ajax_start'));
         add_action('wp_ajax_area051_webp_process', array($this, 'ajax_process'));
         // Old .jpg/.png URLs: when the web server passes a missing upload to WordPress, redirect to the WebP.
@@ -50,6 +50,8 @@ class Area051_WebP_Converter {
     public function get_settings() {
         $defaults = array(
             'quality' => 80,
+            'max_width' => 0,
+            'max_height' => 0,
             'backup' => 1,
             'keep_original' => 0,
             'replace_in_content' => 1,
@@ -59,7 +61,30 @@ class Area051_WebP_Converter {
         $settings = get_option(self::OPTION_SETTINGS, array());
         $settings = is_array($settings) ? array_merge($defaults, $settings) : $defaults;
         $settings['quality'] = max(1, min(100, (int) $settings['quality']));
+        $settings['max_width'] = max(0, (int) $settings['max_width']);
+        $settings['max_height'] = max(0, (int) $settings['max_height']);
         return $settings;
+    }
+
+    /** Reads the settings form fields from a request (already unslashed). */
+    protected function sanitize_settings($src) {
+        return array(
+            'quality' => isset($src['quality']) ? max(1, min(100, absint($src['quality']))) : 80,
+            'max_width' => isset($src['max_width']) ? min(20000, absint($src['max_width'])) : 0,
+            'max_height' => isset($src['max_height']) ? min(20000, absint($src['max_height'])) : 0,
+            'backup' => !empty($src['backup']) ? 1 : 0,
+            'keep_original' => !empty($src['keep_original']) ? 1 : 0,
+            'replace_in_content' => !empty($src['replace_in_content']) ? 1 : 0,
+            'skip_larger' => !empty($src['skip_larger']) ? 1 : 0,
+            'redirect' => !empty($src['redirect']) ? 1 : 0,
+        );
+    }
+
+    /** The page sends the form with every conversion, so what is on screen is what gets applied. */
+    protected function save_settings_from_ajax() {
+        if (!empty($_POST['with_settings'])) {
+            update_option(self::OPTION_SETTINGS, $this->sanitize_settings(wp_unslash($_POST)), false);
+        }
     }
 
     public function handle_save_settings() {
@@ -68,15 +93,7 @@ class Area051_WebP_Converter {
         }
         check_admin_referer(self::NONCE);
 
-        $settings = array(
-            'quality' => isset($_POST['quality']) ? max(1, min(100, absint($_POST['quality']))) : 80,
-            'backup' => !empty($_POST['backup']) ? 1 : 0,
-            'keep_original' => !empty($_POST['keep_original']) ? 1 : 0,
-            'replace_in_content' => !empty($_POST['replace_in_content']) ? 1 : 0,
-            'skip_larger' => !empty($_POST['skip_larger']) ? 1 : 0,
-            'redirect' => !empty($_POST['redirect']) ? 1 : 0,
-        );
-        update_option(self::OPTION_SETTINGS, $settings, false);
+        update_option(self::OPTION_SETTINGS, $this->sanitize_settings(wp_unslash($_POST)), false);
 
         wp_safe_redirect(add_query_arg(array('page' => self::MENU_SLUG, 'a51w_notice' => 'saved'), admin_url('admin.php')));
         exit;
@@ -155,7 +172,6 @@ class Area051_WebP_Converter {
         $settings = $this->get_settings();
         $stats = $this->get_stats();
         $notice = isset($_GET['a51w_notice']) ? sanitize_key(wp_unslash($_GET['a51w_notice'])) : '';
-        $message = isset($_GET['a51w_msg']) ? sanitize_text_field(wp_unslash($_GET['a51w_msg'])) : '';
         $filter = isset($_GET['a51w_filter']) ? sanitize_key(wp_unslash($_GET['a51w_filter'])) : 'pending';
         if (!in_array($filter, array('pending', 'converted', 'skipped', 'all'), true)) {
             $filter = 'pending';
@@ -167,33 +183,26 @@ class Area051_WebP_Converter {
 
         if ($notice === 'saved') {
             echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Impostazioni salvate.', 'area051-webp-converter') . '</p></div>';
-        } elseif ($notice === 'done' || $notice === 'error') {
-            echo '<div class="notice notice-' . ($notice === 'done' ? 'success' : 'error') . ' is-dismissible"><p>' . esc_html($message) . '</p></div>';
         }
 
         if (!$this->webp_supported()) {
             echo '<div class="notice notice-error"><p>' . esc_html__('Il server non supporta la creazione di immagini WebP (servono GD o Imagick con supporto WebP). Chiedi all\'hosting di attivarlo.', 'area051-webp-converter') . '</p></div>';
         }
 
-        // Summary.
-        $saved = max(0, $stats['bytes_before'] - $stats['bytes_after']);
-        echo '<div style="max-width:1100px;border:1px solid #dcdcde;background:#fff;padding:12px 16px;border-radius:4px;margin:12px 0;">';
-        echo '<p style="margin:0;"><strong>' . esc_html__('Da convertire:', 'area051-webp-converter') . '</strong> '
-            . esc_html(sprintf(__('%1$d JPEG, %2$d PNG', 'area051-webp-converter'), $stats['jpeg'], $stats['png']))
-            . ' &nbsp;|&nbsp; <strong>' . esc_html__('Convertite:', 'area051-webp-converter') . '</strong> ' . esc_html((string) $stats['converted'])
-            . ' &nbsp;|&nbsp; <strong>' . esc_html__('Saltate:', 'area051-webp-converter') . '</strong> ' . esc_html((string) $stats['skipped'])
-            . ' &nbsp;|&nbsp; <strong>' . esc_html__('Spazio risparmiato:', 'area051-webp-converter') . '</strong> ' . esc_html(size_format($saved, 1))
-            . ($stats['bytes_before'] > 0 ? ' (' . esc_html(sprintf('-%d%%', round($saved * 100 / $stats['bytes_before']))) . ')' : '')
-            . '</p>';
-        echo '</div>';
+        echo '<style>@keyframes a51w-spin{to{transform:rotate(360deg)}}.a51w-spin{animation:a51w-spin 1s linear infinite;color:#2271b1;}.a51w-ok{color:#1d7f4e;}</style>';
+        echo '<div id="a51w-summary" style="max-width:1100px;border:1px solid #dcdcde;background:#fff;padding:12px 16px;border-radius:4px;margin:12px 0;">' . $this->summary_html($stats) . '</div>';
 
         // Settings.
         echo '<h2>' . esc_html__('Impostazioni conversione', 'area051-webp-converter') . '</h2>';
-        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="max-width:1100px;border:1px solid #dcdcde;background:#fff;padding:12px 16px;border-radius:4px;">';
+        echo '<form id="a51w-settings" method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="max-width:1100px;border:1px solid #dcdcde;background:#fff;padding:12px 16px;border-radius:4px;">';
         wp_nonce_field(self::NONCE);
         echo '<input type="hidden" name="action" value="area051_webp_save_settings">';
         echo '<p><label><strong>' . esc_html__('Qualità WebP (1-100)', 'area051-webp-converter') . '</strong> <input type="number" name="quality" min="1" max="100" value="' . esc_attr((string) $settings['quality']) . '" style="width:80px;"></label> '
             . '<span style="color:#50575e;">' . esc_html__('80 è un buon compromesso; più basso = file più leggeri, qualità minore.', 'area051-webp-converter') . '</span></p>';
+        echo '<p><strong>' . esc_html__('Misura massima', 'area051-webp-converter') . '</strong> '
+            . '<label>' . esc_html__('larghezza', 'area051-webp-converter') . ' <input type="number" name="max_width" min="0" max="20000" value="' . esc_attr((string) $settings['max_width']) . '" style="width:90px;"> px</label> &nbsp; '
+            . '<label>' . esc_html__('altezza', 'area051-webp-converter') . ' <input type="number" name="max_height" min="0" max="20000" value="' . esc_attr((string) $settings['max_height']) . '" style="width:90px;"> px</label><br>'
+            . '<span style="color:#50575e;">' . esc_html__('Immagini orizzontali: vale la larghezza massima. Verticali: vale l\'altezza massima. Quadrate: la più piccola delle due. L\'altro lato segue in proporzione e le immagini più piccole non vengono ingrandite. 0 = nessun limite.', 'area051-webp-converter') . '</span></p>';
         $checkboxes = array(
             'backup' => sprintf(__('Fai un backup degli originali in wp-content/%s/ (stessa struttura di cartelle di uploads)', 'area051-webp-converter'), self::BACKUP_DIR),
             'keep_original' => __('Mantieni i file originali JPEG/PNG in uploads accanto ai WebP (occupa più spazio, ma i vecchi indirizzi continuano a funzionare senza redirect)', 'area051-webp-converter'),
@@ -212,7 +221,7 @@ class Area051_WebP_Converter {
 
         // Bulk.
         echo '<h2 style="margin-top:24px;">' . esc_html__('Conversione', 'area051-webp-converter') . '</h2>';
-        echo '<p style="max-width:1100px;">' . esc_html__('Converte l\'immagine originale e tutte le sue miniature, aggiorna la libreria media e, se attivo, gli indirizzi nei contenuti. Le immagini vengono elaborate a blocchi: tieni aperta la pagina fino alla fine. Salva le impostazioni prima di avviare.', 'area051-webp-converter') . '</p>';
+        echo '<p style="max-width:1100px;">' . esc_html__('Converte l\'immagine originale e tutte le sue miniature, aggiorna la libreria media e, se attivo, gli indirizzi nei contenuti. Le immagini vengono elaborate a blocchi: puoi continuare a lavorare in un\'altra scheda, ma lascia aperta questa pagina fino alla fine. Vengono usate le impostazioni che vedi qui sopra.', 'area051-webp-converter') . '</p>';
         wp_nonce_field('area051_webp_ajax', 'area051_webp_ajax_nonce');
         echo '<p>';
         echo '<button type="button" class="button button-primary" id="a51w-bulk-all"' . ($this->webp_supported() ? '' : ' disabled') . '>' . esc_html__('Converti tutte le immagini JPEG/PNG', 'area051-webp-converter') . '</button> ';
@@ -230,6 +239,66 @@ class Area051_WebP_Converter {
 
         $this->render_script();
         echo '</div>';
+    }
+
+    protected function summary_html($stats) {
+        $saved = max(0, $stats['bytes_before'] - $stats['bytes_after']);
+        return '<p style="margin:0;"><strong>' . esc_html__('Da convertire:', 'area051-webp-converter') . '</strong> '
+            . esc_html(sprintf(__('%1$d JPEG, %2$d PNG', 'area051-webp-converter'), $stats['jpeg'], $stats['png']))
+            . ' &nbsp;|&nbsp; <strong>' . esc_html__('Convertite:', 'area051-webp-converter') . '</strong> ' . esc_html((string) $stats['converted'])
+            . ' &nbsp;|&nbsp; <strong>' . esc_html__('Saltate:', 'area051-webp-converter') . '</strong> ' . esc_html((string) $stats['skipped'])
+            . ' &nbsp;|&nbsp; <strong>' . esc_html__('Spazio risparmiato:', 'area051-webp-converter') . '</strong> ' . esc_html($saved > 0 ? size_format($saved, 1) : '0 B')
+            . ($stats['bytes_before'] > 0 ? ' (' . esc_html(sprintf('-%d%%', round($saved * 100 / $stats['bytes_before']))) . ')' : '')
+            . '</p>';
+    }
+
+    /** One table row; also returned by AJAX so the page updates it in place. */
+    protected function row_html($id) {
+        $id = (int) $id;
+        $file = get_attached_file($id);
+        $relative = (string) get_post_meta($id, '_wp_attached_file', true);
+        $mime = (string) get_post_mime_type($id);
+        $meta = wp_get_attachment_metadata($id);
+        $url = (string) wp_get_attachment_url($id);
+        $info = get_post_meta($id, self::META_INFO, true);
+        $skipped = (string) get_post_meta($id, self::META_SKIPPED, true);
+        $size = ($file && file_exists($file)) ? filesize($file) : 0;
+        $convertible = in_array($mime, self::$source_mimes, true);
+
+        $html = '<tr data-id="' . esc_attr((string) $id) . '">';
+        $html .= '<td>' . ($convertible ? '<input type="checkbox" class="a51w-row" value="' . esc_attr((string) $id) . '">' : '') . '</td>';
+        $html .= '<td>' . wp_get_attachment_image($id, array(60, 60), false, array('style' => 'width:60px;height:60px;object-fit:cover;', 'loading' => 'lazy')) . '</td>';
+        $html .= '<td style="word-break:break-all;"><a href="' . esc_url($url) . '" target="_blank" rel="noopener">' . esc_html($relative !== '' ? $relative : get_the_title($id)) . '</a><br><span style="color:#50575e;">ID ' . esc_html((string) $id) . ' - <a href="' . esc_url((string) get_edit_post_link($id, 'raw')) . '">' . esc_html__('modifica', 'area051-webp-converter') . '</a></span></td>';
+        $html .= '<td>' . esc_html($mime) . '</td>';
+        $html .= '<td>' . esc_html($size ? size_format($size, 1) : '-');
+        if (is_array($meta) && !empty($meta['width']) && !empty($meta['height'])) {
+            $html .= '<br><span style="color:#50575e;">' . esc_html((int) $meta['width'] . ' x ' . (int) $meta['height']) . '</span>';
+        }
+        $html .= '</td><td class="a51w-status">';
+        if (is_array($info)) {
+            $before = isset($info['bytes_before']) ? (int) $info['bytes_before'] : 0;
+            $after = isset($info['bytes_after']) ? (int) $info['bytes_after'] : 0;
+            $html .= '<span class="dashicons dashicons-yes-alt a51w-ok"></span> ' . esc_html(sprintf(__('Convertita: %1$s → %2$s', 'area051-webp-converter'), size_format($before, 1), size_format($after, 1)));
+            if ($before > 0) {
+                $html .= ' <strong>' . esc_html(sprintf('%+d%%', round(($after - $before) * 100 / $before))) . '</strong>';
+            }
+            $origin = !empty($info['backup']) ? __('backup presente', 'area051-webp-converter') : (!empty($info['kept_original']) ? __('originale mantenuto', 'area051-webp-converter') : __('senza backup', 'area051-webp-converter'));
+            $html .= '<br><span style="color:#50575e;">' . esc_html(sprintf(__('Con miniature, qualità %1$d, %2$s', 'area051-webp-converter'), isset($info['quality']) ? (int) $info['quality'] : 0, $origin)) . '</span>';
+        } elseif ($skipped !== '') {
+            $html .= esc_html(sprintf(__('Saltata: %s', 'area051-webp-converter'), $skipped));
+        } elseif ($convertible) {
+            $html .= esc_html__('Da convertire', 'area051-webp-converter');
+        } else {
+            $html .= '-';
+        }
+        $html .= '</td><td>';
+        if ($convertible && $this->webp_supported()) {
+            $html .= '<button type="button" class="button button-small a51w-convert">' . esc_html__('Converti', 'area051-webp-converter') . '</button>';
+        }
+        if (is_array($info) && (!empty($info['backup']) || !empty($info['kept_original']))) {
+            $html .= '<button type="button" class="button button-small a51w-restore">' . esc_html__('Ripristina originale', 'area051-webp-converter') . '</button>';
+        }
+        return $html . '</td></tr>';
     }
 
     protected function render_list($filter, $paged, $stats) {
@@ -273,53 +342,11 @@ class Area051_WebP_Converter {
             return;
         }
 
-        echo '<table class="widefat striped" style="max-width:1100px;">';
+        echo '<table id="a51w-table" class="widefat striped" style="max-width:1100px;">';
         echo '<thead><tr><th style="width:30px;"><input type="checkbox" id="a51w-check-all"></th><th style="width:70px;">' . esc_html__('Anteprima', 'area051-webp-converter') . '</th><th>' . esc_html__('File', 'area051-webp-converter') . '</th><th>' . esc_html__('Tipo', 'area051-webp-converter') . '</th><th>' . esc_html__('Peso', 'area051-webp-converter') . '</th><th>' . esc_html__('Stato', 'area051-webp-converter') . '</th><th>' . esc_html__('Azioni', 'area051-webp-converter') . '</th></tr></thead><tbody>';
 
         foreach ($query->posts as $post) {
-            $id = (int) $post->ID;
-            $file = get_attached_file($id);
-            $relative = (string) get_post_meta($id, '_wp_attached_file', true);
-            $mime = (string) $post->post_mime_type;
-            $info = get_post_meta($id, self::META_INFO, true);
-            $skipped = (string) get_post_meta($id, self::META_SKIPPED, true);
-            $size = ($file && file_exists($file)) ? filesize($file) : 0;
-            $convertible = in_array($mime, self::$source_mimes, true);
-
-            echo '<tr>';
-            echo '<td>' . ($convertible ? '<input type="checkbox" class="a51w-row" value="' . esc_attr((string) $id) . '">' : '') . '</td>';
-            echo '<td>' . wp_get_attachment_image($id, array(60, 60), false, array('style' => 'width:60px;height:60px;object-fit:cover;')) . '</td>';
-            echo '<td><a href="' . esc_url(get_edit_post_link($id)) . '">' . esc_html($relative !== '' ? $relative : get_the_title($id)) . '</a><br><span style="color:#50575e;">ID ' . esc_html((string) $id) . '</span></td>';
-            echo '<td>' . esc_html($mime) . '</td>';
-            echo '<td>' . esc_html($size ? size_format($size, 1) : '-') . '</td>';
-            echo '<td>';
-            if (is_array($info)) {
-                $before = isset($info['bytes_before']) ? (int) $info['bytes_before'] : 0;
-                $after = isset($info['bytes_after']) ? (int) $info['bytes_after'] : 0;
-                echo esc_html(sprintf(__('Convertita: %1$s → %2$s', 'area051-webp-converter'), size_format($before, 1), size_format($after, 1)));
-                if ($before > 0) {
-                    echo ' <strong>' . esc_html(sprintf('-%d%%', round(($before - $after) * 100 / $before))) . '</strong>';
-                }
-                echo '<br><span style="color:#50575e;">' . esc_html(sprintf(__('Qualità %1$d, %2$s', 'area051-webp-converter'), isset($info['quality']) ? (int) $info['quality'] : 0, !empty($info['backup']) ? __('backup presente', 'area051-webp-converter') : (!empty($info['kept_original']) ? __('originale mantenuto', 'area051-webp-converter') : __('senza backup', 'area051-webp-converter')))) . '</span>';
-            } elseif ($skipped !== '') {
-                echo esc_html(sprintf(__('Saltata: %s', 'area051-webp-converter'), $skipped));
-            } elseif ($convertible) {
-                echo esc_html__('Da convertire', 'area051-webp-converter');
-            } else {
-                echo '-';
-            }
-            echo '</td>';
-            echo '<td>';
-            if ($convertible && $this->webp_supported()) {
-                $url = wp_nonce_url(add_query_arg(array('action' => 'area051_webp_convert_one', 'id' => $id), admin_url('admin-post.php')), self::NONCE . '_one_' . $id);
-                echo '<a class="button button-small" href="' . esc_url($url) . '">' . esc_html__('Converti', 'area051-webp-converter') . '</a>';
-            }
-            if (is_array($info) && (!empty($info['backup']) || !empty($info['kept_original']))) {
-                $url = wp_nonce_url(add_query_arg(array('action' => 'area051_webp_restore_one', 'id' => $id), admin_url('admin-post.php')), self::NONCE . '_restore_' . $id);
-                echo '<a class="button button-small" href="' . esc_url($url) . '" onclick="return confirm(\'' . esc_js(__('Ripristinare l\'immagine originale al posto del WebP?', 'area051-webp-converter')) . '\');">' . esc_html__('Ripristina originale', 'area051-webp-converter') . '</a>';
-            }
-            echo '</td>';
-            echo '</tr>';
+            echo $this->row_html((int) $post->ID);
         }
         echo '</tbody></table>';
 
@@ -341,114 +368,211 @@ class Area051_WebP_Converter {
         echo <<<'JS'
 <script>
 (function(){
-    var allBtn = document.getElementById("a51w-bulk-all");
-    var selBtn = document.getElementById("a51w-bulk-selected");
-    var stopBtn = document.getElementById("a51w-stop");
-    var wrap = document.getElementById("a51w-progress");
-    var txt = document.getElementById("a51w-progress-text");
-    var meta = document.getElementById("a51w-progress-meta");
-    var bar = document.getElementById("a51w-progress-bar");
-    var errors = document.getElementById("a51w-progress-errors");
-    var nonce = document.getElementById("area051_webp_ajax_nonce");
-    var checkAll = document.getElementById("a51w-check-all");
+    var $ = function(id){ return document.getElementById(id); };
+    var allBtn = $("a51w-bulk-all"), selBtn = $("a51w-bulk-selected"), stopBtn = $("a51w-stop");
+    var wrap = $("a51w-progress"), txt = $("a51w-progress-text"), meta = $("a51w-progress-meta"), bar = $("a51w-progress-bar"), errors = $("a51w-progress-errors");
+    var nonce = $("area051_webp_ajax_nonce"), form = $("a51w-settings"), table = $("a51w-table"), checkAll = $("a51w-check-all");
+    if (!allBtn || !nonce || !form) { return; }
+    var stopped = false, bulkRunning = false, queue = [], queueRunning = false;
+
+    function row(id){ return table ? table.querySelector('tr[data-id="' + parseInt(id, 10) + '"]') : null; }
+    function setStatus(id, icon, text, spin){
+        var tr = row(id);
+        if (!tr) { return; }
+        var cell = tr.querySelector(".a51w-status");
+        cell.textContent = "";
+        var i = document.createElement("span");
+        i.className = "dashicons dashicons-" + icon + (spin ? " a51w-spin" : "");
+        cell.appendChild(i);
+        cell.appendChild(document.createTextNode(" " + text));
+    }
+    function lockRow(id, locked){
+        var tr = row(id);
+        if (!tr) { return; }
+        var els = tr.querySelectorAll("button, input");
+        for (var i = 0; i < els.length; i++) { els[i].disabled = locked; }
+    }
+    function replaceRow(id, html){
+        var tr = row(id);
+        if (!tr || !html) { return; }
+        var body = document.createElement("tbody");
+        body.innerHTML = html;
+        if (body.firstElementChild) { tr.parentNode.replaceChild(body.firstElementChild, tr); }
+    }
+    function summary(html){ if (html) { $("a51w-summary").innerHTML = html; } }
+    function fmt(b){
+        if (!b || b < 0) { return "0 KB"; }
+        return b > 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
+    }
+    function settings(){
+        var data = {with_settings: 1};
+        ["quality", "max_width", "max_height"].forEach(function(n){ data[n] = form.elements[n].value; });
+        ["backup", "keep_original", "replace_in_content", "skip_larger", "redirect"].forEach(function(n){ if (form.elements[n].checked) { data[n] = 1; } });
+        return data;
+    }
+    function request(data, onOk, onFail, onBusy, attempt){
+        attempt = attempt || 0;
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", a51wAjax);
+        xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+        xhr.timeout = 180000;
+        function retry(){
+            // Shared hosting may answer 503/508 when busy: wait longer each time.
+            var overloaded = [429, 502, 503, 504, 508].indexOf(xhr.status) !== -1;
+            var max = overloaded ? 12 : 5;
+            if (attempt >= max) { onFail("il server non risponde" + (xhr.status ? " (HTTP " + xhr.status + ")" : "")); return; }
+            var wait = overloaded ? Math.min(30000 * (attempt + 1), 120000) : 5000 * (attempt + 1);
+            if (onBusy) { onBusy("Server occupato" + (xhr.status ? " (HTTP " + xhr.status + ")" : "") + ", riprovo tra " + (wait / 1000) + "s (" + (attempt + 1) + "/" + max + ")"); }
+            setTimeout(function(){ request(data, onOk, onFail, onBusy, attempt + 1); }, wait);
+        }
+        xhr.onload = function(){
+            var resp = null;
+            try { resp = JSON.parse(xhr.responseText); } catch (e) { retry(); return; }
+            if (!resp || !resp.success) { onFail(resp && resp.data && resp.data.message ? resp.data.message : "risposta non valida (sessione scaduta? ricarica la pagina)"); return; }
+            onOk(resp.data);
+        };
+        xhr.onerror = retry;
+        xhr.ontimeout = retry;
+        var body = [];
+        for (var k in data) { body.push(encodeURIComponent(k) + "=" + encodeURIComponent(data[k])); }
+        xhr.send(body.join("&"));
+    }
+
+    // Single images: one at a time, so many clicks do not flood the hosting.
+    function enqueue(action, id){
+        lockRow(id, true);
+        setStatus(id, "clock", "In coda", false);
+        queue.push({action: action, id: id, settings: settings()});
+        runQueue();
+    }
+    function runQueue(){
+        if (queueRunning || !queue.length) { return; }
+        queueRunning = true;
+        var job = queue.shift(), id = job.id;
+        setStatus(id, "update", job.action === "convert" ? "Conversione in corso..." : "Ripristino in corso...", true);
+        var data = job.settings;
+        data.action = "area051_webp_" + job.action + "_one";
+        data.nonce = nonce.value;
+        data.id = id;
+        if (job.action === "restore") { delete data.with_settings; }
+        function next(){ queueRunning = false; setTimeout(runQueue, 300); }
+        request(data, function(d){
+            replaceRow(id, d.row);
+            summary(d.summary);
+            if (d.message) { setStatus(id, "warning", d.message, false); }
+            next();
+        }, function(msg){
+            lockRow(id, false);
+            setStatus(id, "warning", "Errore: " + msg, false);
+            next();
+        }, function(msg){ setStatus(id, "update", msg, true); });
+    }
+    if (table) {
+        table.addEventListener("click", function(e){
+            var btn = e.target.closest ? e.target.closest(".a51w-convert, .a51w-restore") : null;
+            if (!btn) { return; }
+            var id = btn.closest("tr").getAttribute("data-id");
+            if (btn.classList.contains("a51w-convert")) { enqueue("convert", id); return; }
+            if (confirm("Ripristinare l'immagine originale al posto del WebP?")) { enqueue("restore", id); }
+        });
+    }
     if (checkAll) {
         checkAll.addEventListener("change", function(){
-            var rows = document.querySelectorAll(".a51w-row");
+            var rows = document.querySelectorAll(".a51w-row:not(:disabled)");
             for (var i = 0; i < rows.length; i++) { rows[i].checked = checkAll.checked; }
         });
     }
-    if (!allBtn || !nonce) { return; }
-    var stopped = false;
 
-    function fmt(bytes){
-        if (!bytes) { return "0 KB"; }
-        if (bytes > 1048576) { return (bytes / 1048576).toFixed(1) + " MB"; }
-        return Math.round(bytes / 1024) + " KB";
-    }
+    // Bulk.
+    var current = 0;
     function show(d){
         var pct = d.total > 0 ? Math.floor(d.processed * 100 / d.total) : 100;
         bar.style.width = pct + "%";
         bar.textContent = pct + "%";
         txt.textContent = "Elaborate " + d.processed + " di " + d.total;
-        var saved = (d.bytes_before || 0) - (d.bytes_after || 0);
-        meta.textContent = "Convertite: " + d.converted + " | Saltate: " + d.skipped + " | Errori: " + d.failed + " | Risparmiati: " + fmt(saved);
-        if (d.new_errors && d.new_errors.length) {
-            for (var i = 0; i < d.new_errors.length; i++) {
-                var li = document.createElement("li");
-                li.textContent = d.new_errors[i];
-                errors.appendChild(li);
-            }
+        meta.textContent = "Convertite: " + d.converted + " | Saltate: " + d.skipped + " | Errori: " + d.failed + " | Risparmiati: " + fmt(d.bytes_before - d.bytes_after);
+        for (var id in d.rows) { replaceRow(id, d.rows[id]); }
+        (d.new_errors || []).forEach(function(e){
+            var li = document.createElement("li");
+            li.textContent = e;
+            errors.appendChild(li);
+        });
+        summary(d.summary);
+        if (d.next_id) {
+            current = d.next_id;
+            lockRow(current, true);
+            setStatus(current, "update", "Conversione in corso...", true);
         }
     }
     function finish(text){
         txt.textContent = text;
-        allBtn.disabled = false;
-        selBtn.disabled = false;
+        bulkRunning = false;
+        allBtn.disabled = selBtn.disabled = false;
         stopBtn.style.display = "none";
+        stopBtn.disabled = false;
+        // Rows left queued go back to their normal state.
+        var left = table ? table.querySelectorAll("tr[data-bulk]") : [];
+        for (var i = 0; i < left.length; i++) {
+            var id = left[i].getAttribute("data-id");
+            left[i].removeAttribute("data-bulk");
+            lockRow(id, false);
+            setStatus(id, "minus", "Da convertire", false);
+        }
+        if (current && row(current) && row(current).querySelector(".a51w-spin")) {
+            lockRow(current, false);
+            setStatus(current, "minus", "Da convertire", false);
+        }
+        current = 0;
     }
-    function post(data, onOk, onFail){
-        var xhr = new XMLHttpRequest();
-        xhr.open("POST", a51wAjax);
-        xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-        xhr.timeout = 120000;
-        xhr.onload = function(){
-            var resp = null;
-            try { resp = JSON.parse(xhr.responseText); } catch (e) { onFail(xhr.status || 0, true); return; }
-            if (!resp || !resp.success) { finish("Errore: " + (resp && resp.data ? (resp.data.message || resp.data) : "risposta non valida")); return; }
-            onOk(resp.data);
-        };
-        xhr.onerror = function(){ onFail(0, false); };
-        xhr.ontimeout = function(){ onFail(0, false); };
-        var body = [];
-        for (var k in data) { body.push(encodeURIComponent(k) + "=" + encodeURIComponent(data[k])); }
-        xhr.send(body.join("&"));
-    }
-    function processBatch(attempt){
+    function processBatch(){
         if (stopped) { finish("Conversione fermata: riavviala per continuare con le immagini rimaste."); return; }
-        post({action: "area051_webp_process", nonce: nonce.value}, function(d){
+        request({action: "area051_webp_process", nonce: nonce.value}, function(d){
             show(d);
             if (d.done) {
-                finish("Conversione completata: " + d.converted + " convertite, " + d.skipped + " saltate, " + d.failed + " errori. Ricarica la pagina per aggiornare l'elenco.");
+                current = 0;
+                finish("Conversione completata: " + d.converted + " convertite, " + d.skipped + " saltate, " + d.failed + " errori.");
                 return;
             }
-            setTimeout(function(){ processBatch(0); }, 1500);
-        }, function(status){
-            // Shared hosting may answer 503/508 when busy: wait longer each time.
-            var overloaded = [429, 502, 503, 504, 508].indexOf(status) !== -1;
-            var max = overloaded ? 12 : 5;
-            if (attempt < max) {
-                var wait = overloaded ? Math.min(30000 * (attempt + 1), 120000) : 5000 * (attempt + 1);
-                txt.textContent = "Server occupato" + (status ? " (HTTP " + status + ")" : "") + ", nuovo tentativo " + (attempt + 1) + " di " + max + " tra " + (wait / 1000) + "s...";
-                setTimeout(function(){ processBatch(attempt + 1); }, wait);
-            } else {
-                finish("Il server non risponde" + (status ? " (HTTP " + status + ")" : "") + ". Ricarica la pagina e riavvia: le immagini già convertite non vengono rifatte.");
-            }
-        });
+            setTimeout(processBatch, 1000);
+        }, function(msg){ finish("Conversione interrotta: " + msg + ". Riavviala: le immagini già convertite non vengono rifatte."); }, function(msg){ txt.textContent = msg; });
     }
     function start(ids){
-        if (!confirm(ids.length ? "Convertire in WebP le " + ids.length + " immagini selezionate?" : "Convertire in WebP tutte le immagini JPEG/PNG della libreria con le impostazioni salvate?")) { return; }
+        if (bulkRunning) { return; }
+        if (!confirm(ids.length ? "Convertire in WebP le " + ids.length + " immagini selezionate?" : "Convertire in WebP tutte le immagini JPEG/PNG della libreria?")) { return; }
+        bulkRunning = true;
         stopped = false;
-        allBtn.disabled = true;
-        selBtn.disabled = true;
+        allBtn.disabled = selBtn.disabled = true;
         stopBtn.style.display = "";
+        stopBtn.disabled = false;
         wrap.style.display = "block";
-        errors.innerHTML = "";
+        errors.textContent = "";
         txt.textContent = "Preparazione...";
-        post({action: "area051_webp_start", nonce: nonce.value, ids: ids.join(",")}, function(d){
+        ids.forEach(function(id){
+            lockRow(id, true);
+            setStatus(id, "clock", "In coda", false);
+            if (row(id)) { row(id).setAttribute("data-bulk", "1"); }
+        });
+        var data = settings();
+        data.action = "area051_webp_start";
+        data.nonce = nonce.value;
+        data.ids = ids.join(",");
+        request(data, function(d){
             show(d);
             if (d.done) { finish("Nessuna immagine da convertire."); return; }
-            processBatch(0);
-        }, function(status){ finish("Avvio non riuscito" + (status ? " (HTTP " + status + ")" : "") + ". Riprova."); });
+            processBatch();
+        }, function(msg){ finish("Avvio non riuscito: " + msg); }, function(msg){ txt.textContent = msg; });
     }
     allBtn.addEventListener("click", function(){ start([]); });
     selBtn.addEventListener("click", function(){
-        var ids = [];
-        var rows = document.querySelectorAll(".a51w-row:checked");
+        var ids = [], rows = document.querySelectorAll(".a51w-row:checked:not(:disabled)");
         for (var i = 0; i < rows.length; i++) { ids.push(rows[i].value); }
         if (!ids.length) { alert("Nessuna immagine selezionata."); return; }
         start(ids);
     });
     stopBtn.addEventListener("click", function(){ stopped = true; stopBtn.disabled = true; txt.textContent = "Arresto dopo il blocco in corso..."; });
+    window.addEventListener("beforeunload", function(e){
+        if (bulkRunning || queueRunning) { e.preventDefault(); e.returnValue = ""; }
+    });
 })();
 </script>
 JS;
@@ -462,8 +586,11 @@ JS;
         return self::STATE_PREFIX . get_current_user_id();
     }
 
-    protected function progress_payload($state, $new_errors = array()) {
+    protected function progress_payload($state, $new_errors = array(), $rows = array()) {
         return array(
+            'rows' => (object) $rows,
+            'summary' => $this->summary_html($this->get_stats()),
+            'next_id' => isset($state['ids'][$state['cursor']]) ? (int) $state['ids'][$state['cursor']] : 0,
             'total' => (int) $state['total'],
             'processed' => (int) $state['cursor'],
             'converted' => (int) $state['converted'],
@@ -483,6 +610,8 @@ JS;
         if (!$this->webp_supported()) {
             wp_send_json_error(array('message' => 'Il server non supporta WebP.'));
         }
+
+        $this->save_settings_from_ajax();
 
         $ids = array();
         $raw = isset($_POST['ids']) ? sanitize_text_field(wp_unslash($_POST['ids'])) : '';
@@ -526,14 +655,24 @@ JS;
             wp_send_json_error(array('message' => 'Non autorizzato.'));
         }
 
+        // A retried request may arrive while the first one is still working.
+        $lock = 'batch_' . get_current_user_id();
+        $locked = $this->lock($lock);
         $state = get_transient($this->state_key());
         if (!is_array($state)) {
             wp_send_json_error(array('message' => 'Conversione non trovata: riavviala.'));
+        }
+        if (!$locked) {
+            sleep(2);
+            $payload = $this->progress_payload($state);
+            $payload['done'] = false;
+            wp_send_json_success($payload);
         }
 
         @set_time_limit(120);
         $started = microtime(true);
         $new_errors = array();
+        $rows = array();
 
         while ($state['cursor'] < $state['total'] && (microtime(true) - $started) < self::BATCH_SECONDS) {
             $id = (int) $state['ids'][$state['cursor']];
@@ -552,13 +691,12 @@ JS;
                 $state['failed']++;
                 $new_errors[] = sprintf('ID %d: %s', $id, $result['message']);
             }
+            $rows[$id] = $this->row_html($id);
         }
 
         set_transient($this->state_key(), $state, DAY_IN_SECONDS);
-        $payload = $this->progress_payload($state, $new_errors);
-        if ($payload['done']) {
-            delete_transient($this->state_key());
-        }
+        $payload = $this->progress_payload($state, $new_errors, $rows);
+        $this->unlock($lock);
         wp_send_json_success($payload);
     }
 
@@ -566,39 +704,61 @@ JS;
     /* Single actions                                                      */
     /* ------------------------------------------------------------------ */
 
-    protected function redirect_with_message($ok, $message) {
-        wp_safe_redirect(add_query_arg(array(
-            'page' => self::MENU_SLUG,
-            'a51w_notice' => $ok ? 'done' : 'error',
-            'a51w_msg' => rawurlencode($message),
-            'a51w_filter' => isset($_GET['a51w_filter']) ? sanitize_key(wp_unslash($_GET['a51w_filter'])) : 'pending',
-        ), admin_url('admin.php')));
-        exit;
+    protected function one_request_id() {
+        if (!current_user_can('manage_options') || !check_ajax_referer('area051_webp_ajax', 'nonce', false)) {
+            wp_send_json_error(array('message' => 'non autorizzato, ricarica la pagina'));
+        }
+        @set_time_limit(180);
+        return isset($_POST['id']) ? absint($_POST['id']) : 0;
     }
 
-    public function handle_convert_one() {
-        $id = isset($_GET['id']) ? absint($_GET['id']) : 0;
-        if (!current_user_can('manage_options')) {
-            wp_die(esc_html__('Non autorizzato.', 'area051-webp-converter'));
+    protected function one_response($id, $message = '') {
+        wp_send_json_success(array(
+            'row' => $this->row_html($id),
+            'summary' => $this->summary_html($this->get_stats()),
+            'message' => $message,
+        ));
+    }
+
+    public function ajax_convert_one() {
+        $id = $this->one_request_id();
+        if (!$this->webp_supported()) {
+            wp_send_json_error(array('message' => 'il server non supporta WebP'));
         }
-        check_admin_referer(self::NONCE . '_one_' . $id);
+        $this->save_settings_from_ajax();
 
         $result = $this->convert_attachment($id, $this->get_settings());
-        if ($result['status'] === 'converted') {
-            $this->redirect_with_message(true, sprintf('ID %d convertita: %s → %s.', $id, size_format($result['bytes_before'], 1), size_format($result['bytes_after'], 1)));
+        if ($result['status'] === 'error') {
+            wp_send_json_error(array('message' => $result['message']));
         }
-        $this->redirect_with_message($result['status'] === 'skipped', sprintf('ID %d: %s', $id, $result['message']));
+        // A retry after a lost response finds the image already converted: the row says so.
+        $already = is_array(get_post_meta($id, self::META_INFO, true));
+        $this->one_response($id, ($result['status'] === 'skipped' && !$already) ? 'Saltata: ' . $result['message'] : '');
     }
 
-    public function handle_restore_one() {
-        $id = isset($_GET['id']) ? absint($_GET['id']) : 0;
-        if (!current_user_can('manage_options')) {
-            wp_die(esc_html__('Non autorizzato.', 'area051-webp-converter'));
-        }
-        check_admin_referer(self::NONCE . '_restore_' . $id);
-
+    public function ajax_restore_one() {
+        $id = $this->one_request_id();
         $result = $this->restore_attachment($id);
-        $this->redirect_with_message($result['ok'], sprintf('ID %d: %s', $id, $result['message']));
+        if (!$result['ok']) {
+            wp_send_json_error(array('message' => $result['message']));
+        }
+        $this->one_response($id);
+    }
+
+    /** MySQL named lock: released by the server even when PHP is killed. */
+    protected function lock($name) {
+        global $wpdb;
+        return (string) $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 0)', $this->lock_name($name))) === '1';
+    }
+
+    protected function unlock($name) {
+        global $wpdb;
+        $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $this->lock_name($name)));
+    }
+
+    protected function lock_name($name) {
+        global $wpdb;
+        return 'a51w_' . md5(DB_NAME . $wpdb->prefix . $name);
     }
 
     /* ------------------------------------------------------------------ */
@@ -627,7 +787,12 @@ JS;
         if (!isset($taken[$candidate]) && !file_exists($basedir . '/' . $candidate)) {
             return $candidate;
         }
-        return $dir . $info['filename'] . '-' . strtolower($info['extension']) . '.webp';
+        $base = $dir . $info['filename'] . '-' . strtolower($info['extension']);
+        $candidate = $base . '.webp';
+        for ($n = 2; isset($taken[$candidate]) || file_exists($basedir . '/' . $candidate); $n++) {
+            $candidate = $base . '-' . $n . '.webp';
+        }
+        return $candidate;
     }
 
     /**
@@ -665,6 +830,40 @@ JS;
      * @return array{status:string,message:string,bytes_before:int,bytes_after:int}
      */
     public function convert_attachment($id, $settings) {
+        if (!$this->lock('img_' . (int) $id)) {
+            return array('status' => 'error', 'message' => 'immagine già in lavorazione', 'bytes_before' => 0, 'bytes_after' => 0);
+        }
+        $result = $this->do_convert_attachment($id, $settings);
+        $this->unlock('img_' . (int) $id);
+        return $result;
+    }
+
+    /**
+     * Size to apply: landscape images are limited by width, portrait by height, square by the
+     * smaller limit. The other side follows in proportion; never enlarges. Null = leave as is.
+     */
+    protected function limited_size($width, $height, $settings) {
+        $max_w = isset($settings['max_width']) ? (int) $settings['max_width'] : 0;
+        $max_h = isset($settings['max_height']) ? (int) $settings['max_height'] : 0;
+        if ($width <= 0 || $height <= 0) {
+            return null;
+        }
+        if ($width > $height) {
+            $limit = $max_w;
+        } elseif ($height > $width) {
+            $limit = $max_h;
+        } else {
+            $limit = ($max_w && $max_h) ? min($max_w, $max_h) : max($max_w, $max_h);
+        }
+        $longest = max($width, $height);
+        if ($limit <= 0 || $longest <= $limit) {
+            return null;
+        }
+        $ratio = $limit / $longest;
+        return array(max(1, (int) round($width * $ratio)), max(1, (int) round($height * $ratio)));
+    }
+
+    protected function do_convert_attachment($id, $settings) {
         $out = array('status' => 'error', 'message' => '', 'bytes_before' => 0, 'bytes_after' => 0);
         $id = (int) $id;
         $post = get_post($id);
@@ -693,6 +892,7 @@ JS;
         $quality = isset($settings['quality']) ? (int) $settings['quality'] : 80;
         $map = array();          // old relative => new relative
         $created = array();      // absolute paths written by this run
+        $dims = array();         // old relative => final width and height
         $taken = array();
 
         foreach ($files as $relative => $role) {
@@ -714,7 +914,23 @@ JS;
                 $out['message'] = 'impossibile aprire ' . $relative . ': ' . $editor->get_error_message();
                 return $out;
             }
+            // The WebP may lose the EXIF orientation: apply it to the pixels first.
+            if (method_exists($editor, 'maybe_exif_rotate')) {
+                $editor->maybe_exif_rotate();
+            }
+            $current = $editor->get_size();
+            $limited = $this->limited_size((int) $current['width'], (int) $current['height'], $settings);
+            if ($limited) {
+                $resized = $editor->resize($limited[0], $limited[1], false);
+                if (is_wp_error($resized)) {
+                    $this->delete_files($created);
+                    $out['message'] = 'ridimensionamento non riuscito per ' . $relative . ': ' . $resized->get_error_message();
+                    return $out;
+                }
+            }
             $editor->set_quality($quality);
+            $final = $editor->get_size();
+            $dims[$relative] = array((int) $final['width'], (int) $final['height']);
             $saved = $editor->save($new_abs, 'image/webp');
             unset($editor);
             if (is_wp_error($saved) || !file_exists($new_abs)) {
@@ -761,6 +977,8 @@ JS;
         $new_meta = is_array($meta) ? $meta : array();
         $new_meta['file'] = $map[$main_rel];
         $new_meta['filesize'] = (int) filesize($up['basedir'] . '/' . $map[$main_rel]);
+        $new_meta['width'] = $dims[$main_rel][0];
+        $new_meta['height'] = $dims[$main_rel][1];
         if (!empty($new_meta['original_image'])) {
             $orig_rel = array_search('original_image', $files, true);
             if ($orig_rel !== false && isset($map[$orig_rel])) {
@@ -783,6 +1001,8 @@ JS;
                 }
                 $new_meta['sizes'][$size_name]['file'] = wp_basename($map[$size_rel]);
                 $new_meta['sizes'][$size_name]['mime-type'] = 'image/webp';
+                $new_meta['sizes'][$size_name]['width'] = $dims[$size_rel][0];
+                $new_meta['sizes'][$size_name]['height'] = $dims[$size_rel][1];
                 $new_meta['sizes'][$size_name]['filesize'] = (int) filesize($up['basedir'] . '/' . $map[$size_rel]);
             }
         }
@@ -950,19 +1170,21 @@ JS;
             return;
         }
 
-        $info = pathinfo($relative);
-        $dir = (isset($info['dirname']) && $info['dirname'] !== '.') ? $info['dirname'] . '/' : '';
-        // "foto-jpg.webp" exists only when this very file collided with another one: check it first.
-        $candidates = array(
-            $dir . $info['filename'] . '-' . strtolower($ext_match[1]) . '.webp',
-            $dir . $info['filename'] . '.webp',
-        );
-        foreach ($candidates as $candidate) {
-            if (file_exists($up['basedir'] . '/' . $candidate)) {
-                $target = $up['baseurl'] . '/' . str_replace('%2F', '/', rawurlencode($candidate));
-                wp_redirect($target, 301, 'Area051 WebP Converter');
-                exit;
-            }
+        // Exact lookup in the conversion maps: file names alone could match another image.
+        global $wpdb;
+        $raw = $wpdb->get_var($wpdb->prepare(
+            "SELECT meta_value FROM {$wpdb->postmeta} WHERE meta_key = %s AND meta_value LIKE %s LIMIT 1",
+            self::META_INFO,
+            '%' . $wpdb->esc_like('s:' . strlen($relative) . ':"' . $relative . '";s:') . '%.webp%'
+        ));
+        $info = maybe_unserialize($raw);
+        if (!is_array($info) || empty($info['files'][$relative])) {
+            return;
+        }
+        $candidate = $info['files'][$relative];
+        if (file_exists($up['basedir'] . '/' . $candidate)) {
+            wp_redirect($up['baseurl'] . '/' . str_replace('%2F', '/', rawurlencode($candidate)), 301, 'Area051 WebP Converter');
+            exit;
         }
     }
 }
