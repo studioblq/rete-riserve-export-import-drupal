@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Reti Riserve Setting
  * Description: Logo default e sticky, pagina di accesso personalizzata, disattivazione ed eliminazione dei commenti.
- * Version: 1.4.4
+ * Version: 1.5.0
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -300,6 +300,14 @@ JS;
         echo '<tr><th colspan="2"><h2 style="margin:10px 0 0;">' . esc_html__('Pagina di accesso', 'reti-riserve-setting') . '</h2></th></tr>';
 
         echo '<tr>';
+        echo '<th scope="row">' . esc_html__('Card dei caroselli', 'reti-riserve-setting') . '</th>';
+        echo '<td>';
+        echo '<label><input type="checkbox" name="rrs_carousel_cards" value="1" ' . checked(1, (int) $settings['carousel_cards'], false) . '> ' . esc_html__('Card allineate e della stessa altezza, immagine a tutta larghezza e pulsante in fondo', 'reti-riserve-setting') . '</label>';
+        echo '<p class="description">' . esc_html__('Vale per i caroselli dentro una riga Divi con classe CSS "carouselmio".', 'reti-riserve-setting') . '</p>';
+        echo '</td>';
+        echo '</tr>';
+
+        echo '<tr>';
         echo '<th scope="row">' . esc_html__('Personalizza login', 'reti-riserve-setting') . '</th>';
         echo '<td>';
         echo '<label><input type="checkbox" name="rrs_login_custom" value="1" ' . checked(1, (int) $settings['login_custom'], false) . '> ' . esc_html__('Usa logo, sfondo e titolo personalizzati nella pagina wp-login.php', 'reti-riserve-setting') . '</label>';
@@ -425,6 +433,7 @@ JS;
             'preview_default_image' => isset($_POST['rrs_preview_default_image']) ? esc_url_raw(trim(wp_unslash($_POST['rrs_preview_default_image']))) : '',
             'testata_default_image' => isset($_POST['rrs_testata_default_image']) ? esc_url_raw(trim(wp_unslash($_POST['rrs_testata_default_image']))) : '',
             'comments_disabled' => !empty($_POST['rrs_comments_disabled']) ? 1 : 0,
+            'carousel_cards' => !empty($_POST['rrs_carousel_cards']) ? 1 : 0,
             'login_custom' => !empty($_POST['rrs_login_custom']) ? 1 : 0,
             'login_title' => isset($_POST['rrs_login_title']) ? sanitize_text_field(wp_unslash($_POST['rrs_login_title'])) : '',
             'login_subtitle' => isset($_POST['rrs_login_subtitle']) ? sanitize_text_field(wp_unslash($_POST['rrs_login_subtitle'])) : '',
@@ -739,6 +748,17 @@ JS;
             . 'object-fit: cover;'
             . '}'
         );
+
+        $settings = $this->get_settings();
+        if (!empty($settings['carousel_cards'])) {
+            $css_file = __DIR__ . '/assets/carousel-cards.css';
+            wp_enqueue_style(
+                'rrs-carousel-cards',
+                plugins_url('assets/carousel-cards.css', __FILE__),
+                array(),
+                file_exists($css_file) ? (string) filemtime($css_file) : '1.5.0'
+            );
+        }
     }
 
     public function print_front_script_fallback() {
@@ -935,6 +955,7 @@ JS;
                 'preview_default_image' => '',
                 'testata_default_image' => '',
                 'comments_disabled' => 0,
+                'carousel_cards' => 1,
                 'login_custom' => 1,
                 'login_title' => 'Area di gestione',
                 'login_subtitle' => 'Accedi per gestire i contenuti del sito',

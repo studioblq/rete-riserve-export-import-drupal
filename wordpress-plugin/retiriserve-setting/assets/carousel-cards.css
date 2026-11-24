@@ -1,0 +1,15 @@
+/* Card del carosello .carouselmio: stessa altezza, stesso allineamento, immagine a tutta larghezza */
+.carouselmio .owl-carousel .owl-stage { display: flex; }
+.carouselmio .owl-carousel .owl-item { display: flex; flex: 0 0 auto; height: auto; }
+.carouselmio .owl-carousel .owl-item > .item { display: flex; flex-direction: column; width: 100%; }
+/* <p> vuoti aggiunti da WordPress: erano lo scalino fra la prima card e le altre */
+.carouselmio .owl-carousel .item > p:empty { display: none; }
+.carouselmio .owl-carousel .item > .et_pb_section { display: flex; flex-direction: column; flex: 1 1 auto; width: 100%; box-sizing: border-box; }
+.carouselmio .owl-carousel .item > .et_pb_section > .et_pb_row { flex: 0 0 auto; }
+/* Pulsante in fondo alla card */
+.carouselmio .owl-carousel .item > .et_pb_section > .et_pb_row:last-child { flex: 1 1 auto; display: flex; }
+.carouselmio .owl-carousel .item > .et_pb_section > .et_pb_row:last-child > .et_pb_column { display: flex; flex-direction: column; }
+.carouselmio .owl-carousel .item > .et_pb_section > .et_pb_row:last-child .et_pb_button_module_wrapper { margin-top: auto !important; padding-top: 15px; }
+/* Immagine: segue i margini negativi impostati nella card, qualunque sia il valore */
+.carouselmio .owl-carousel .item > .et_pb_section > .et_pb_row:first-child .et_pb_text.et_clickable { width: auto !important; max-width: none !important; }
+.carouselmio .owl-carousel .item > .et_pb_section > .et_pb_row:first-child .et_pb_text.et_clickable img { display: block; width: 100%; aspect-ratio: 25 / 14; height: auto; object-fit: cover; }
