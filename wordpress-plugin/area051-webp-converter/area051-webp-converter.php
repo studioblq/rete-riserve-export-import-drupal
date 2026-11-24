@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Area051 WebP Converter
  * Description: Converte in WebP compresso le immagini JPEG e PNG della libreria media, con backup opzionale e redirect dai vecchi indirizzi.
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 }
 
 require_once __DIR__ . '/lib/class-area051-github-updater.php';
-new Area051_GitHub_Updater_V2(__FILE__, 'area051-webp-converter');
+new Area051_GitHub_Updater_V3(__FILE__, 'area051-webp-converter');
 
 class Area051_WebP_Converter {
     const MENU_SLUG = 'area051-webp-converter';

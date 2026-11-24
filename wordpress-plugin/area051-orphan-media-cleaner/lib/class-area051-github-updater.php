@@ -17,19 +17,24 @@
  * WordPress runs the "update_plugins_github.com" filter only after a successful
  * call to api.wordpress.org: on slow hosting that call times out and the GitHub
  * update never appeared.
+ *
+ * V3: the plugins and updates screens use a manifest at most 5 minutes old, and a failed
+ * request keeps the last good manifest instead of hiding every update.
  */
 
 if (!defined('ABSPATH')) {
     exit;
 }
 
-if (!class_exists('Area051_GitHub_Updater_V2', false)) {
+if (!class_exists('Area051_GitHub_Updater_V3', false)) {
 
-    class Area051_GitHub_Updater_V2 {
+    class Area051_GitHub_Updater_V3 {
         const MANIFEST_URL = 'https://github.com/studioblq/rete-riserve-export-import-drupal/releases/download/updates/manifest.json';
-        const CACHE_KEY = 'area051_gh_manifest_v1';
+        const CACHE_KEY = 'area051_gh_manifest_v3';
         const CACHE_TTL = HOUR_IN_SECONDS;
-        const ERROR_TTL = 30 * MINUTE_IN_SECONDS;
+        const SCREEN_TTL = 5 * MINUTE_IN_SECONDS;
+        const ERROR_TTL = 2 * MINUTE_IN_SECONDS;
+        const STORE_TTL = 30 * DAY_IN_SECONDS;
 
         /** @var array<string,bool> Hooks registered once per request, shared by all instances. */
         protected static $instances = array();
@@ -67,16 +72,27 @@ if (!class_exists('Area051_GitHub_Updater_V2', false)) {
         }
 
         public static function flush_cache() {
-            delete_site_transient(self::CACHE_KEY);
+            // Forces a new request but keeps the last good manifest in case it fails.
+            $cached = get_site_transient(self::CACHE_KEY);
+            if (is_array($cached)) {
+                $cached['next_check'] = 0;
+                set_site_transient(self::CACHE_KEY, $cached, self::STORE_TTL);
+            }
         }
 
         /**
          * Manifest decoded as array: { plugins: { slug: {...} } }.
          */
-        protected static function get_manifest($force = false) {
-            if (!$force) {
-                $cached = get_site_transient(self::CACHE_KEY);
-                if (is_array($cached)) {
+        protected static function get_manifest() {
+            global $pagenow;
+
+            $cached = get_site_transient(self::CACHE_KEY);
+            $cached = is_array($cached) && isset($cached['next_check'], $cached['checked_at']) ? $cached : null;
+
+            if ($cached !== null) {
+                $on_screen = is_admin() && in_array($pagenow, array('plugins.php', 'update-core.php'), true);
+                $stale = $on_screen && empty($cached['error']) && (time() - (int) $cached['checked_at']) >= self::SCREEN_TTL;
+                if (time() < (int) $cached['next_check'] && !$stale) {
                     return $cached;
                 }
             }
@@ -88,27 +104,30 @@ if (!class_exists('Area051_GitHub_Updater_V2', false)) {
                 'headers' => array('Accept' => 'application/json'),
             ));
 
-            $manifest = array('plugins' => array(), 'error' => '');
-            $ttl = self::CACHE_TTL;
-
+            $error = '';
+            $decoded = null;
             if (is_wp_error($response)) {
-                $manifest['error'] = $response->get_error_message();
-                $ttl = self::ERROR_TTL;
+                $error = $response->get_error_message();
             } elseif ((int) wp_remote_retrieve_response_code($response) !== 200) {
-                $manifest['error'] = 'HTTP ' . (int) wp_remote_retrieve_response_code($response);
-                $ttl = self::ERROR_TTL;
+                $error = 'HTTP ' . (int) wp_remote_retrieve_response_code($response);
             } else {
                 $decoded = json_decode(wp_remote_retrieve_body($response), true);
-                if (is_array($decoded) && isset($decoded['plugins']) && is_array($decoded['plugins'])) {
-                    $manifest = $decoded;
-                    $manifest['error'] = '';
-                } else {
-                    $manifest['error'] = 'Manifest non valido';
-                    $ttl = self::ERROR_TTL;
+                if (!is_array($decoded) || !isset($decoded['plugins']) || !is_array($decoded['plugins'])) {
+                    $error = 'Manifest non valido';
                 }
             }
 
-            set_site_transient(self::CACHE_KEY, $manifest, $ttl);
+            if ($error === '') {
+                $manifest = $decoded;
+            } else {
+                // Keep showing the updates already known.
+                $manifest = $cached !== null ? $cached : array('plugins' => array());
+            }
+            $manifest['error'] = $error;
+            $manifest['checked_at'] = time();
+            $manifest['next_check'] = time() + ($error === '' ? self::CACHE_TTL : self::ERROR_TTL);
+
+            set_site_transient(self::CACHE_KEY, $manifest, self::STORE_TTL);
             return $manifest;
         }
 
