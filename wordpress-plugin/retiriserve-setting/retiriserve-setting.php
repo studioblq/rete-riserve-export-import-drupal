@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Reti Riserve Setting
  * Description: Logo default e sticky, pagina di accesso personalizzata, disattivazione ed eliminazione dei commenti.
- * Version: 1.5.0
+ * Version: 1.6.0
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -302,7 +302,7 @@ JS;
         echo '<tr>';
         echo '<th scope="row">' . esc_html__('Card dei caroselli', 'reti-riserve-setting') . '</th>';
         echo '<td>';
-        echo '<label><input type="checkbox" name="rrs_carousel_cards" value="1" ' . checked(1, (int) $settings['carousel_cards'], false) . '> ' . esc_html__('Card allineate e della stessa altezza, immagine a tutta larghezza e pulsante in fondo', 'reti-riserve-setting') . '</label>';
+        echo '<label><input type="checkbox" name="rrs_carousel_cards" value="1" ' . checked(1, (int) $settings['carousel_cards'], false) . '> ' . esc_html__('Card allineate e della stessa altezza, immagine a tutta larghezza, pulsante in fondo e frecce tonde', 'reti-riserve-setting') . '</label>';
         echo '<p class="description">' . esc_html__('Vale per i caroselli dentro una riga Divi con classe CSS "carouselmio".', 'reti-riserve-setting') . '</p>';
         echo '</td>';
         echo '</tr>';
