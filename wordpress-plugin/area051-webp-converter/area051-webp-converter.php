@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Area051 WebP Converter
  * Description: Converte in WebP compresso le immagini JPEG e PNG della libreria media, con backup opzionale e redirect dai vecchi indirizzi.
- * Version: 1.1.1
+ * Version: 1.2.0
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -235,7 +235,14 @@ class Area051_WebP_Converter {
         echo '<ul id="a51w-progress-errors" style="margin:8px 0 0 18px;list-style:disc;color:#b32d2e;"></ul>';
         echo '</div>';
 
-        $this->render_list($filter, $paged, $stats);
+        $orderby = isset($_GET['a51w_orderby']) ? sanitize_key(wp_unslash($_GET['a51w_orderby'])) : 'id';
+        if (!array_key_exists($orderby, $this->sortable_columns())) {
+            $orderby = 'id';
+        }
+        $order = (isset($_GET['a51w_order']) && $_GET['a51w_order'] === 'asc') ? 'asc' : 'desc';
+        echo '<div id="a51w-list">';
+        $this->render_list($filter, $paged, $stats, $orderby, $order);
+        echo '</div>';
 
         $this->render_script();
         echo '</div>';
@@ -270,9 +277,9 @@ class Area051_WebP_Converter {
         $html .= '<td>' . wp_get_attachment_image($id, array(60, 60), false, array('style' => 'width:60px;height:60px;object-fit:cover;', 'loading' => 'lazy')) . '</td>';
         $html .= '<td style="word-break:break-all;"><a href="' . esc_url($url) . '" target="_blank" rel="noopener">' . esc_html($relative !== '' ? $relative : get_the_title($id)) . '</a><br><span style="color:#50575e;">ID ' . esc_html((string) $id) . ' - <a href="' . esc_url((string) get_edit_post_link($id, 'raw')) . '">' . esc_html__('modifica', 'area051-webp-converter') . '</a></span></td>';
         $html .= '<td>' . esc_html($mime) . '</td>';
-        $html .= '<td>' . esc_html($size ? size_format($size, 1) : '-');
+        $html .= '<td style="white-space:nowrap;">' . esc_html($size ? size_format($size, 1) : '-') . '</td><td style="white-space:nowrap;">';
         if (is_array($meta) && !empty($meta['width']) && !empty($meta['height'])) {
-            $html .= '<br><span style="color:#50575e;">' . esc_html((int) $meta['width'] . ' x ' . (int) $meta['height']) . '</span>';
+            $html .= esc_html((int) $meta['width'] . ' x ' . (int) $meta['height']);
         }
         $html .= '</td><td class="a51w-status">';
         if (is_array($info)) {
@@ -301,7 +308,64 @@ class Area051_WebP_Converter {
         return $html . '</td></tr>';
     }
 
-    protected function render_list($filter, $paged, $stats) {
+    /** Sort key => column label ('id' sorts the preview column). */
+    protected function sortable_columns() {
+        return array(
+            'id' => __('Anteprima (ID)', 'area051-webp-converter'),
+            'file' => __('File', 'area051-webp-converter'),
+            'type' => __('Tipo', 'area051-webp-converter'),
+            'weight' => __('Peso', 'area051-webp-converter'),
+            'size' => __('Misure', 'area051-webp-converter'),
+            'status' => __('Stato', 'area051-webp-converter'),
+        );
+    }
+
+    /** Weight, size and status live in serialized meta: the whole list is sorted in PHP, then paged. */
+    protected function sort_ids($ids, $orderby, $order) {
+        $ids = array_map('intval', $ids);
+        if ($orderby !== 'id') {
+            _prime_post_caches($ids, false, true);
+        }
+        $keys = array();
+        foreach ($ids as $id) {
+            $keys[$id] = $this->sort_value($id, $orderby);
+        }
+        usort($ids, function ($a, $b) use ($keys, $order) {
+            $cmp = is_string($keys[$a]) ? strnatcasecmp($keys[$a], $keys[$b]) : ($keys[$a] <=> $keys[$b]);
+            $cmp = $cmp !== 0 ? $cmp : ($a <=> $b);
+            return $order === 'asc' ? $cmp : -$cmp;
+        });
+        return $ids;
+    }
+
+    protected function sort_value($id, $orderby) {
+        if ($orderby === 'file') {
+            return (string) get_post_meta($id, '_wp_attached_file', true);
+        }
+        if ($orderby === 'type') {
+            return (string) get_post_mime_type($id);
+        }
+        if ($orderby === 'weight') {
+            $file = get_attached_file($id);
+            return ($file && file_exists($file)) ? (int) filesize($file) : 0;
+        }
+        if ($orderby === 'size') {
+            $meta = wp_get_attachment_metadata($id);
+            return is_array($meta) && isset($meta['width'], $meta['height']) ? (int) $meta['width'] * (int) $meta['height'] : 0;
+        }
+        if ($orderby === 'status') {
+            // To convert, skipped, then converted by saved percentage.
+            $info = get_post_meta($id, self::META_INFO, true);
+            if (is_array($info)) {
+                $before = !empty($info['bytes_before']) ? (int) $info['bytes_before'] : 0;
+                return 1000.0 + ($before > 0 ? ($before - (int) $info['bytes_after']) * 100 / $before : 0);
+            }
+            return get_post_meta($id, self::META_SKIPPED, true) !== '' ? -1.0 : -2.0;
+        }
+        return (int) $id;
+    }
+
+    protected function render_list($filter, $paged, $stats, $orderby = 'id', $order = 'desc') {
         $tabs = array(
             'pending' => sprintf(__('Da convertire (%d)', 'area051-webp-converter'), $stats['jpeg'] + $stats['png']),
             'converted' => sprintf(__('Convertite (%d)', 'area051-webp-converter'), $stats['converted']),
@@ -313,7 +377,7 @@ class Area051_WebP_Converter {
         $links = array();
         foreach ($tabs as $key => $label) {
             $url = add_query_arg(array('page' => self::MENU_SLUG, 'a51w_filter' => $key), admin_url('admin.php'));
-            $links[] = '<li><a href="' . esc_url($url) . '"' . ($filter === $key ? ' class="current"' : '') . '>' . esc_html($label) . '</a></li>';
+            $links[] = '<li><a href="' . esc_url($url) . '" class="a51w-nav' . ($filter === $key ? ' current' : '') . '">' . esc_html($label) . '</a></li>';
         }
         echo implode(' | ', $links);
         echo '</ul>';
@@ -321,10 +385,10 @@ class Area051_WebP_Converter {
         $args = array(
             'post_type' => 'attachment',
             'post_status' => 'inherit',
-            'posts_per_page' => self::PER_PAGE,
-            'paged' => $paged,
-            'orderby' => 'ID',
-            'order' => 'DESC',
+            'posts_per_page' => -1,
+            'fields' => 'ids',
+            'no_found_rows' => true,
+            'lang' => '', // Polylang: images in every language.
         );
         if ($filter === 'pending') {
             $args['post_mime_type'] = self::$source_mimes;
@@ -336,25 +400,36 @@ class Area051_WebP_Converter {
             $args['post_mime_type'] = array('image/jpeg', 'image/png', 'image/webp', 'image/gif');
         }
         $query = new WP_Query($args);
+        $ids = $this->sort_ids((array) $query->posts, $orderby, $order);
 
-        if (!$query->have_posts()) {
+        if (empty($ids)) {
             echo '<p><em>' . esc_html__('Nessuna immagine in questo elenco.', 'area051-webp-converter') . '</em></p>';
             return;
         }
 
-        echo '<table id="a51w-table" class="widefat striped" style="max-width:1100px;">';
-        echo '<thead><tr><th style="width:30px;"><input type="checkbox" id="a51w-check-all"></th><th style="width:70px;">' . esc_html__('Anteprima', 'area051-webp-converter') . '</th><th>' . esc_html__('File', 'area051-webp-converter') . '</th><th>' . esc_html__('Tipo', 'area051-webp-converter') . '</th><th>' . esc_html__('Peso', 'area051-webp-converter') . '</th><th>' . esc_html__('Stato', 'area051-webp-converter') . '</th><th>' . esc_html__('Azioni', 'area051-webp-converter') . '</th></tr></thead><tbody>';
+        $total_pages = (int) ceil(count($ids) / self::PER_PAGE);
+        $paged = min($paged, $total_pages);
+        $ids = array_slice($ids, ($paged - 1) * self::PER_PAGE, self::PER_PAGE);
 
-        foreach ($query->posts as $post) {
-            echo $this->row_html((int) $post->ID);
+        echo '<table id="a51w-table" class="widefat striped" style="max-width:1100px;">';
+        echo '<thead><tr><td style="width:30px;"><input type="checkbox" id="a51w-check-all"></td>';
+        foreach ($this->sortable_columns() as $key => $label) {
+            $current = $orderby === $key;
+            $next = $current ? ($order === 'asc' ? 'desc' : 'asc') : (in_array($key, array('weight', 'size'), true) ? 'desc' : 'asc');
+            $url = add_query_arg(array('page' => self::MENU_SLUG, 'a51w_filter' => $filter, 'a51w_orderby' => $key, 'a51w_order' => $next), admin_url('admin.php'));
+            echo '<th scope="col"' . ($current ? ' aria-sort="' . ($order === 'asc' ? 'ascending' : 'descending') . '"' : '') . '><a class="a51w-nav" style="white-space:nowrap;text-decoration:none;" href="' . esc_url($url) . '">' . esc_html($label) . ' <span style="color:' . ($current ? '#2271b1' : '#a7aaad') . ';">' . ($current ? ($order === 'asc' ? '&#9650;' : '&#9660;') : '&#8597;') . '</span></a></th>';
+        }
+        echo '<th>' . esc_html__('Azioni', 'area051-webp-converter') . '</th></tr></thead><tbody>';
+
+        foreach ($ids as $id) {
+            echo $this->row_html($id);
         }
         echo '</tbody></table>';
 
-        $total_pages = (int) $query->max_num_pages;
         if ($total_pages > 1) {
             echo '<div class="tablenav"><div class="tablenav-pages" style="float:none;margin:10px 0;">';
             echo paginate_links(array(
-                'base' => add_query_arg(array('page' => self::MENU_SLUG, 'a51w_filter' => $filter, 'paged' => '%#%'), admin_url('admin.php')),
+                'base' => add_query_arg(array('page' => self::MENU_SLUG, 'a51w_filter' => $filter, 'a51w_orderby' => $orderby, 'a51w_order' => $order, 'paged' => '%#%'), admin_url('admin.php')),
                 'format' => '',
                 'current' => $paged,
                 'total' => $total_pages,
@@ -371,9 +446,9 @@ class Area051_WebP_Converter {
     var $ = function(id){ return document.getElementById(id); };
     var allBtn = $("a51w-bulk-all"), selBtn = $("a51w-bulk-selected"), stopBtn = $("a51w-stop");
     var wrap = $("a51w-progress"), txt = $("a51w-progress-text"), meta = $("a51w-progress-meta"), bar = $("a51w-progress-bar"), errors = $("a51w-progress-errors");
-    var nonce = $("area051_webp_ajax_nonce"), form = $("a51w-settings"), table = $("a51w-table"), checkAll = $("a51w-check-all");
-    if (!allBtn || !nonce || !form) { return; }
-    var stopped = false, bulkRunning = false, queue = [], queueRunning = false;
+    var nonce = $("area051_webp_ajax_nonce"), form = $("a51w-settings"), table = $("a51w-table"), list = $("a51w-list");
+    if (!allBtn || !nonce || !form || !list) { return; }
+    var stopped = false, bulkRunning = false, queue = [], queueRunning = false, activeId = 0, current = 0;
 
     function row(id){ return table ? table.querySelector('tr[data-id="' + parseInt(id, 10) + '"]') : null; }
     function setStatus(id, icon, text, spin){
@@ -449,6 +524,7 @@ class Area051_WebP_Converter {
         if (queueRunning || !queue.length) { return; }
         queueRunning = true;
         var job = queue.shift(), id = job.id;
+        activeId = id;
         setStatus(id, "update", job.action === "convert" ? "Conversione in corso..." : "Ripristino in corso...", true);
         var data = job.settings;
         data.action = "area051_webp_" + job.action + "_one";
@@ -467,24 +543,43 @@ class Area051_WebP_Converter {
             next();
         }, function(msg){ setStatus(id, "update", msg, true); });
     }
-    if (table) {
-        table.addEventListener("click", function(e){
-            var btn = e.target.closest ? e.target.closest(".a51w-convert, .a51w-restore") : null;
-            if (!btn) { return; }
-            var id = btn.closest("tr").getAttribute("data-id");
-            if (btn.classList.contains("a51w-convert")) { enqueue("convert", id); return; }
-            if (confirm("Ripristinare l'immagine originale al posto del WebP?")) { enqueue("restore", id); }
-        });
-    }
-    if (checkAll) {
-        checkAll.addEventListener("change", function(){
-            var rows = document.querySelectorAll(".a51w-row:not(:disabled)");
-            for (var i = 0; i < rows.length; i++) { rows[i].checked = checkAll.checked; }
-        });
+    list.addEventListener("click", function(e){
+        var nav = e.target.closest("a.a51w-nav, .tablenav-pages a");
+        if (nav && !e.ctrlKey && !e.metaKey && !e.shiftKey) { e.preventDefault(); loadList(nav.href); return; }
+        var btn = e.target.closest(".a51w-convert, .a51w-restore");
+        if (!btn) { return; }
+        var id = btn.closest("tr").getAttribute("data-id");
+        if (btn.classList.contains("a51w-convert")) { enqueue("convert", id); return; }
+        if (confirm("Ripristinare l'immagine originale al posto del WebP?")) { enqueue("restore", id); }
+    });
+    list.addEventListener("change", function(e){
+        if (e.target.id !== "a51w-check-all") { return; }
+        var rows = list.querySelectorAll(".a51w-row:not(:disabled)");
+        for (var i = 0; i < rows.length; i++) { rows[i].checked = e.target.checked; }
+    });
+    // Sorting, tabs and pages swap only the list, so running conversions go on.
+    function loadList(url){
+        list.style.opacity = "0.5";
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", url);
+        xhr.timeout = 60000;
+        xhr.onload = function(){
+            list.style.opacity = "";
+            var fresh = new DOMParser().parseFromString(xhr.responseText, "text/html").getElementById("a51w-list");
+            if (xhr.status !== 200 || !fresh) { alert("Elenco non caricato (HTTP " + xhr.status + "), riprova."); return; }
+            list.innerHTML = fresh.innerHTML;
+            table = $("a51w-table");
+            history.replaceState(null, "", url);
+            queue.forEach(function(job){ lockRow(job.id, true); setStatus(job.id, "clock", "In coda", false); });
+            [queueRunning ? activeId : 0, current].forEach(function(id){
+                if (id) { lockRow(id, true); setStatus(id, "update", "In lavorazione...", true); }
+            });
+        };
+        xhr.onerror = xhr.ontimeout = function(){ list.style.opacity = ""; alert("Elenco non caricato, riprova."); };
+        xhr.send();
     }
 
     // Bulk.
-    var current = 0;
     function show(d){
         var pct = d.total > 0 ? Math.floor(d.processed * 100 / d.total) : 100;
         bar.style.width = pct + "%";
@@ -629,6 +724,7 @@ JS;
                 'order' => 'ASC',
                 'no_found_rows' => true,
                 'suppress_filters' => true,
+                'lang' => '',
                 'meta_query' => array(array('key' => self::META_SKIPPED, 'compare' => 'NOT EXISTS')),
             ));
             $ids = array_map('intval', (array) $ids);
