@@ -4,7 +4,7 @@ Tags: webp, images, compression, media
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 1.2.0
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,6 +24,11 @@ Pannello in Area051 WP > WebP Converter:
 Il redirect funziona quando il server passa a WordPress le richieste di file mancanti (configurazione standard di WordPress su Apache). Su Nginx serve una regola nel server.
 
 == Changelog ==
+
+= 1.3.0 =
+* NEW: Interruttore per convertire automaticamente i nuovi upload
+* NEW: Selezione di più caselle con Shift
+* FIX: Un backup non viene mai sovrascritto da un file diverso con lo stesso nome
 
 = 1.2.0 =
 * NEW: Elenco ordinabile per ID, file, tipo, peso, misure e stato, senza ricaricare la pagina

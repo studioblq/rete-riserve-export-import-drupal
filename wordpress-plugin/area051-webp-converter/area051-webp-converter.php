@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Area051 WebP Converter
  * Description: Converte in WebP compresso le immagini JPEG e PNG della libreria media, con backup opzionale e redirect dai vecchi indirizzi.
- * Version: 1.2.0
+ * Version: 1.3.0
  * Author: area051.com
  * Author URI: https://area051.com
  * Update URI: https://github.com/studioblq/rete-riserve-export-import-drupal
@@ -32,11 +32,19 @@ class Area051_WebP_Converter {
 
     protected static $source_mimes = array('image/jpeg', 'image/png');
 
+    /** @var array<string,array> Uploads converted in this request, by absolute WebP path. */
+    protected $converted_uploads = array();
+
     public function init() {
         add_action('admin_menu', array($this, 'register_admin_menu'), 20);
         add_action('admin_post_area051_webp_save_settings', array($this, 'handle_save_settings'));
         add_action('wp_ajax_area051_webp_convert_one', array($this, 'ajax_convert_one'));
         add_action('wp_ajax_area051_webp_restore_one', array($this, 'ajax_restore_one'));
+        add_action('wp_ajax_area051_webp_settings', array($this, 'ajax_save_settings'));
+        // New uploads: converted before the attachment and its thumbnails are created.
+        add_filter('wp_handle_upload', array($this, 'convert_new_upload'), 20);
+        add_action('add_attachment', array($this, 'remember_new_upload'));
+        add_filter('wp_editor_set_quality', array($this, 'thumbnail_quality'), 20, 2);
         add_action('wp_ajax_area051_webp_start', array($this, 'ajax_start'));
         add_action('wp_ajax_area051_webp_process', array($this, 'ajax_process'));
         // Old .jpg/.png URLs: when the web server passes a missing upload to WordPress, redirect to the WebP.
@@ -57,6 +65,7 @@ class Area051_WebP_Converter {
             'replace_in_content' => 1,
             'skip_larger' => 1,
             'redirect' => 1,
+            'auto_upload' => 0,
         );
         $settings = get_option(self::OPTION_SETTINGS, array());
         $settings = is_array($settings) ? array_merge($defaults, $settings) : $defaults;
@@ -77,6 +86,7 @@ class Area051_WebP_Converter {
             'replace_in_content' => !empty($src['replace_in_content']) ? 1 : 0,
             'skip_larger' => !empty($src['skip_larger']) ? 1 : 0,
             'redirect' => !empty($src['redirect']) ? 1 : 0,
+            'auto_upload' => !empty($src['auto_upload']) ? 1 : 0,
         );
     }
 
@@ -85,6 +95,14 @@ class Area051_WebP_Converter {
         if (!empty($_POST['with_settings'])) {
             update_option(self::OPTION_SETTINGS, $this->sanitize_settings(wp_unslash($_POST)), false);
         }
+    }
+
+    public function ajax_save_settings() {
+        if (!current_user_can('manage_options') || !check_ajax_referer('area051_webp_ajax', 'nonce', false)) {
+            wp_send_json_error(array('message' => 'non autorizzato, ricarica la pagina'));
+        }
+        $this->save_settings_from_ajax();
+        wp_send_json_success(array('auto_upload' => $this->get_settings()['auto_upload']));
     }
 
     public function handle_save_settings() {
@@ -189,7 +207,7 @@ class Area051_WebP_Converter {
             echo '<div class="notice notice-error"><p>' . esc_html__('Il server non supporta la creazione di immagini WebP (servono GD o Imagick con supporto WebP). Chiedi all\'hosting di attivarlo.', 'area051-webp-converter') . '</p></div>';
         }
 
-        echo '<style>@keyframes a51w-spin{to{transform:rotate(360deg)}}.a51w-spin{animation:a51w-spin 1s linear infinite;color:#2271b1;}.a51w-ok{color:#1d7f4e;}</style>';
+        echo '<style>@keyframes a51w-spin{to{transform:rotate(360deg)}}.a51w-spin{animation:a51w-spin 1s linear infinite;color:#2271b1;}.a51w-ok{color:#1d7f4e;}.a51w-switch input{position:absolute;opacity:0;}.a51w-slider{display:inline-block;width:38px;height:20px;border-radius:10px;background:#8c8f94;position:relative;vertical-align:middle;margin-right:6px;transition:background .15s;}.a51w-slider:after{content:"";position:absolute;width:16px;height:16px;border-radius:50%;background:#fff;top:2px;left:2px;transition:left .15s;}.a51w-switch input:checked+.a51w-slider{background:#1d7f4e;}.a51w-switch input:checked+.a51w-slider:after{left:20px;}.a51w-switch input:focus-visible+.a51w-slider{outline:2px solid #2271b1;outline-offset:2px;}</style>';
         echo '<div id="a51w-summary" style="max-width:1100px;border:1px solid #dcdcde;background:#fff;padding:12px 16px;border-radius:4px;margin:12px 0;">' . $this->summary_html($stats) . '</div>';
 
         // Settings.
@@ -203,6 +221,7 @@ class Area051_WebP_Converter {
             . '<label>' . esc_html__('larghezza', 'area051-webp-converter') . ' <input type="number" name="max_width" min="0" max="20000" value="' . esc_attr((string) $settings['max_width']) . '" style="width:90px;"> px</label> &nbsp; '
             . '<label>' . esc_html__('altezza', 'area051-webp-converter') . ' <input type="number" name="max_height" min="0" max="20000" value="' . esc_attr((string) $settings['max_height']) . '" style="width:90px;"> px</label><br>'
             . '<span style="color:#50575e;">' . esc_html__('Immagini orizzontali: vale la larghezza massima. Verticali: vale l\'altezza massima. Quadrate: la più piccola delle due. L\'altro lato segue in proporzione e le immagini più piccole non vengono ingrandite. 0 = nessun limite.', 'area051-webp-converter') . '</span></p>';
+        echo '<p style="padding:10px 12px;background:#f6f7f7;border-left:4px solid #2271b1;"><label class="a51w-switch"><input type="checkbox" name="auto_upload" id="a51w-auto" value="1" ' . checked(1, (int) $settings['auto_upload'], false) . '><span class="a51w-slider" aria-hidden="true"></span> <strong>' . esc_html__('Converti automaticamente i nuovi upload', 'area051-webp-converter') . '</strong></label> <span id="a51w-auto-state" role="status" style="color:#50575e;"></span><br><span style="color:#50575e;">' . esc_html__('Le nuove immagini JPEG/PNG caricate nella libreria diventano WebP con qualità, misura massima, backup e originali impostati qui. Si applica subito; non tocca le immagini già presenti.', 'area051-webp-converter') . '</span></p>';
         $checkboxes = array(
             'backup' => sprintf(__('Fai un backup degli originali in wp-content/%s/ (stessa struttura di cartelle di uploads)', 'area051-webp-converter'), self::BACKUP_DIR),
             'keep_original' => __('Mantieni i file originali JPEG/PNG in uploads accanto ai WebP (occupa più spazio, ma i vecchi indirizzi continuano a funzionare senza redirect)', 'area051-webp-converter'),
@@ -482,7 +501,7 @@ class Area051_WebP_Converter {
     function settings(){
         var data = {with_settings: 1};
         ["quality", "max_width", "max_height"].forEach(function(n){ data[n] = form.elements[n].value; });
-        ["backup", "keep_original", "replace_in_content", "skip_larger", "redirect"].forEach(function(n){ if (form.elements[n].checked) { data[n] = 1; } });
+        ["backup", "keep_original", "replace_in_content", "skip_larger", "redirect", "auto_upload"].forEach(function(n){ if (form.elements[n].checked) { data[n] = 1; } });
         return data;
     }
     function request(data, onOk, onFail, onBusy, attempt){
@@ -551,6 +570,39 @@ class Area051_WebP_Converter {
         var id = btn.closest("tr").getAttribute("data-id");
         if (btn.classList.contains("a51w-convert")) { enqueue("convert", id); return; }
         if (confirm("Ripristinare l'immagine originale al posto del WebP?")) { enqueue("restore", id); }
+    });
+    // Shift+click: the whole range takes the state of the box just clicked.
+    var lastBox = null;
+    list.addEventListener("click", function(e){
+        var box = e.target;
+        if (!box.classList || !box.classList.contains("a51w-row")) { return; }
+        var boxes = Array.prototype.slice.call(list.querySelectorAll(".a51w-row"));
+        // Rows are replaced after a conversion: find the last one by image ID.
+        var from = -1, to = boxes.indexOf(box);
+        boxes.forEach(function(b, i){ if (b.value === lastBox) { from = i; } });
+        if (e.shiftKey && from !== -1) {
+            for (var i = Math.min(from, to); i <= Math.max(from, to); i++) {
+                if (!boxes[i].disabled) { boxes[i].checked = box.checked; }
+            }
+        }
+        lastBox = box.value;
+    });
+    var auto = $("a51w-auto");
+    auto.addEventListener("change", function(){
+        var state = $("a51w-auto-state"), wanted = auto.checked, data = settings();
+        auto.disabled = true;
+        data.auto_upload = wanted ? 1 : 0;
+        data.action = "area051_webp_settings";
+        data.nonce = nonce.value;
+        state.textContent = "Salvataggio...";
+        request(data, function(){
+            auto.disabled = false;
+            state.textContent = wanted ? "Attivo" : "Disattivato";
+        }, function(msg){
+            auto.disabled = false;
+            auto.checked = !wanted;
+            state.textContent = "Non salvato: " + msg;
+        }, function(msg){ state.textContent = msg; });
     });
     list.addEventListener("change", function(e){
         if (e.target.id !== "a51w-check-all") { return; }
@@ -959,6 +1011,50 @@ JS;
         return array(max(1, (int) round($width * $ratio)), max(1, (int) round($height * $ratio)));
     }
 
+    /**
+     * Writes a rotated, resized and compressed WebP copy of an image.
+     *
+     * @return array{0:int,1:int}|WP_Error final width and height
+     */
+    protected function write_webp($old_abs, $new_abs, $settings) {
+        $editor = wp_get_image_editor($old_abs);
+        if (is_wp_error($editor)) {
+            return new WP_Error('a51w_open', 'impossibile aprire il file: ' . $editor->get_error_message());
+        }
+        // The WebP may lose the EXIF orientation: apply it to the pixels first.
+        if (method_exists($editor, 'maybe_exif_rotate')) {
+            $editor->maybe_exif_rotate();
+        }
+        $current = $editor->get_size();
+        $limited = $this->limited_size((int) $current['width'], (int) $current['height'], $settings);
+        if ($limited) {
+            $resized = $editor->resize($limited[0], $limited[1], false);
+            if (is_wp_error($resized)) {
+                return new WP_Error('a51w_resize', 'ridimensionamento non riuscito: ' . $resized->get_error_message());
+            }
+        }
+        $editor->set_quality(isset($settings['quality']) ? (int) $settings['quality'] : 80);
+        $final = $editor->get_size();
+        $saved = $editor->save($new_abs, 'image/webp');
+        if (is_wp_error($saved) || !file_exists($new_abs) || filesize($new_abs) === 0) {
+            $this->delete_files(array($new_abs));
+            return new WP_Error('a51w_save', 'conversione non riuscita' . (is_wp_error($saved) ? ': ' . $saved->get_error_message() : ''));
+        }
+        return array((int) $final['width'], (int) $final['height']);
+    }
+
+    /** Copies a file into the backup tree; never replaces a different backup. */
+    protected function backup_file($source, $relative) {
+        $target = $this->backup_root() . '/' . $relative;
+        if (file_exists($target)) {
+            return md5_file($target) === md5_file($source);
+        }
+        if (!wp_mkdir_p(dirname($target)) || !@copy($source, $target)) {
+            return false;
+        }
+        return filesize($target) === filesize($source);
+    }
+
     protected function do_convert_attachment($id, $settings) {
         $out = array('status' => 'error', 'message' => '', 'bytes_before' => 0, 'bytes_after' => 0);
         $id = (int) $id;
@@ -1004,36 +1100,13 @@ JS;
             $new_rel = $this->webp_relative_path($relative, $up['basedir'], $taken);
             $new_abs = $up['basedir'] . '/' . $new_rel;
 
-            $editor = wp_get_image_editor($old_abs);
-            if (is_wp_error($editor)) {
+            $size = $this->write_webp($old_abs, $new_abs, $settings);
+            if (is_wp_error($size)) {
                 $this->delete_files($created);
-                $out['message'] = 'impossibile aprire ' . $relative . ': ' . $editor->get_error_message();
+                $out['message'] = $relative . ': ' . $size->get_error_message();
                 return $out;
             }
-            // The WebP may lose the EXIF orientation: apply it to the pixels first.
-            if (method_exists($editor, 'maybe_exif_rotate')) {
-                $editor->maybe_exif_rotate();
-            }
-            $current = $editor->get_size();
-            $limited = $this->limited_size((int) $current['width'], (int) $current['height'], $settings);
-            if ($limited) {
-                $resized = $editor->resize($limited[0], $limited[1], false);
-                if (is_wp_error($resized)) {
-                    $this->delete_files($created);
-                    $out['message'] = 'ridimensionamento non riuscito per ' . $relative . ': ' . $resized->get_error_message();
-                    return $out;
-                }
-            }
-            $editor->set_quality($quality);
-            $final = $editor->get_size();
-            $dims[$relative] = array((int) $final['width'], (int) $final['height']);
-            $saved = $editor->save($new_abs, 'image/webp');
-            unset($editor);
-            if (is_wp_error($saved) || !file_exists($new_abs)) {
-                $this->delete_files($created);
-                $out['message'] = 'conversione non riuscita per ' . $relative . (is_wp_error($saved) ? ': ' . $saved->get_error_message() : '');
-                return $out;
-            }
+            $dims[$relative] = $size;
 
             $created[] = $new_abs;
             $taken[$new_rel] = 1;
@@ -1056,10 +1129,9 @@ JS;
         $backup_done = false;
         if (!empty($settings['backup'])) {
             foreach (array_keys($map) as $relative) {
-                $target = $this->backup_root() . '/' . $relative;
-                if (!wp_mkdir_p(dirname($target)) || !@copy($up['basedir'] . '/' . $relative, $target)) {
+                if (!$this->backup_file($up['basedir'] . '/' . $relative, $relative)) {
                     $this->delete_files($created);
-                    $out['message'] = 'backup non riuscito per ' . $relative . ' (permessi di wp-content?)';
+                    $out['message'] = 'backup non riuscito per ' . $relative . ' (permessi, spazio, o un backup diverso con lo stesso nome)';
                     return $out;
                 }
             }
@@ -1138,6 +1210,143 @@ JS;
         return $out;
     }
 
+    /* ------------------------------------------------------------------ */
+    /* New uploads                                                         */
+    /* ------------------------------------------------------------------ */
+
+    /** Thumbnails of new uploads are created by WordPress: same quality as the main image. */
+    public function thumbnail_quality($quality, $mime) {
+        if ($mime !== 'image/webp') {
+            return $quality;
+        }
+        $settings = $this->get_settings();
+        return !empty($settings['auto_upload']) ? $settings['quality'] : $quality;
+    }
+
+    /**
+     * wp_handle_upload filter (uploads and sideloads). On any problem the upload goes on unchanged.
+     */
+    public function convert_new_upload($upload) {
+        if (!is_array($upload) || !empty($upload['error']) || empty($upload['file']) || empty($upload['type']) || !in_array($upload['type'], self::$source_mimes, true)) {
+            return $upload;
+        }
+        $settings = $this->get_settings();
+        if (empty($settings['auto_upload']) || !$this->webp_supported()) {
+            return $upload;
+        }
+
+        $up = $this->uploads();
+        $source = wp_normalize_path($upload['file']);
+        if (strpos($source, $up['basedir'] . '/') !== 0 || !file_exists($source)) {
+            return $upload;
+        }
+        if (function_exists('wp_raise_memory_limit')) {
+            wp_raise_memory_limit('image');
+        }
+
+        // One stem for WebP, original and backup: an old file with the same name is never reused.
+        $dir = dirname($source);
+        $rel_dir = ltrim(substr($dir, strlen($up['basedir'])), '/');
+        $rel_dir = $rel_dir === '' ? '' : $rel_dir . '/';
+        $info = pathinfo($source);
+        $stem = $info['filename'];
+        for ($n = 1; ; $n++) {
+            $webp_name = wp_unique_filename($dir, $stem . '.webp');
+            $final_stem = pathinfo($webp_name, PATHINFO_FILENAME);
+            $original = $dir . '/' . $final_stem . '.' . $info['extension'];
+            $old_rel = $rel_dir . $final_stem . '.' . $info['extension'];
+            if (($original === $source || !file_exists($original)) && !file_exists($this->backup_root() . '/' . $old_rel)) {
+                break;
+            }
+            $stem = $info['filename'] . '-' . $n;
+        }
+        $webp = $dir . '/' . $webp_name;
+
+        $size = $this->write_webp($source, $webp, $settings);
+        if (is_wp_error($size)) {
+            return $upload;
+        }
+        $before = (int) filesize($source);
+        $after = (int) filesize($webp);
+        if (!empty($settings['skip_larger']) && $after >= $before) {
+            $this->delete_files(array($webp));
+            return $upload;
+        }
+        if (!empty($settings['backup']) && !$this->backup_file($source, $old_rel)) {
+            $this->delete_files(array($webp));
+            return $upload;
+        }
+
+        $kept = false;
+        if (!empty($settings['keep_original'])) {
+            $kept = $original === $source || @rename($source, $original);
+        }
+        if (!$kept) {
+            wp_delete_file($source);
+        }
+
+        $this->converted_uploads[$webp] = array(
+            'converted_at' => time(),
+            'on_upload' => 1,
+            'quality' => $settings['quality'],
+            'old_mime' => $upload['type'],
+            'old_attached' => $old_rel,
+            'files' => array($old_rel => $rel_dir . $webp_name),
+            'backup' => !empty($settings['backup']) ? 1 : 0,
+            'kept_original' => $kept ? 1 : 0,
+            'bytes_before' => $before,
+            'bytes_after' => $after,
+        );
+
+        $upload['file'] = $webp;
+        $upload['url'] = trailingslashit(dirname($upload['url'])) . $webp_name;
+        $upload['type'] = 'image/webp';
+        return $upload;
+    }
+
+    public function remember_new_upload($id) {
+        $file = wp_normalize_path((string) get_attached_file($id));
+        if (isset($this->converted_uploads[$file])) {
+            update_post_meta($id, self::META_INFO, $this->converted_uploads[$file]);
+            unset($this->converted_uploads[$file]);
+        }
+    }
+
+    /** The original had no thumbnails: they are generated now, and matched by size in the contents. */
+    protected function restore_upload($id, $info, $up) {
+        if (!function_exists('wp_generate_attachment_metadata')) {
+            require_once ABSPATH . 'wp-admin/includes/image.php';
+        }
+        $old_rel = (string) $info['old_attached'];
+        $webp_meta = wp_get_attachment_metadata($id);
+        $webp_files = $this->collect_attachment_files($id, $webp_meta);
+
+        update_attached_file($id, $up['basedir'] . '/' . $old_rel);
+        global $wpdb;
+        $wpdb->update($wpdb->posts, array('post_mime_type' => (string) $info['old_mime']), array('ID' => $id));
+        clean_post_cache($id);
+        $new_meta = wp_generate_attachment_metadata($id, $up['basedir'] . '/' . $old_rel);
+        wp_update_attachment_metadata($id, $new_meta);
+
+        $by_role = array_flip($this->collect_attachment_files($id, $new_meta));
+        $map = array();
+        foreach ($webp_files as $webp_rel => $role) {
+            if (isset($by_role[$role])) {
+                $map[$webp_rel] = $by_role[$role];
+            } elseif (isset($by_role['main'])) {
+                $map[$webp_rel] = $by_role['main'];
+            }
+        }
+        $this->replace_urls_in_content($map, $up['baseurl']);
+        foreach (array_keys($webp_files) as $webp_rel) {
+            if (strtolower(pathinfo($webp_rel, PATHINFO_EXTENSION)) === 'webp') {
+                wp_delete_file($up['basedir'] . '/' . $webp_rel);
+            }
+        }
+        delete_post_meta($id, self::META_INFO);
+        return array('ok' => true, 'message' => 'originale ripristinato');
+    }
+
     protected function delete_files($absolute_paths) {
         foreach ((array) $absolute_paths as $path) {
             if (is_string($path) && $path !== '' && file_exists($path)) {
@@ -1202,16 +1411,24 @@ JS;
         // Originals come back from uploads (kept) or from the backup folder.
         foreach ($info['files'] as $old_rel => $new_rel) {
             $target = $up['basedir'] . '/' . $old_rel;
+            $source = $this->backup_root() . '/' . $old_rel;
             if (file_exists($target)) {
+                // A later upload may have taken the old name: it is not our original.
+                if (empty($info['kept_original']) && file_exists($source) && md5_file($source) !== md5_file($target)) {
+                    return array('ok' => false, 'message' => 'in uploads esiste già un file diverso con il nome ' . $old_rel);
+                }
                 continue;
             }
-            $source = $this->backup_root() . '/' . $old_rel;
             if (!file_exists($source)) {
                 return array('ok' => false, 'message' => 'originale non trovato né in uploads né nel backup: ' . $old_rel);
             }
             if (!wp_mkdir_p(dirname($target)) || !@copy($source, $target)) {
                 return array('ok' => false, 'message' => 'impossibile ripristinare ' . $old_rel);
             }
+        }
+
+        if (!empty($info['on_upload'])) {
+            return $this->restore_upload($id, $info, $up);
         }
 
         $main_old = isset($info['old_attached']) ? (string) $info['old_attached'] : '';
